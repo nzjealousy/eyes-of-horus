@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ClientProps, ElementConstructor, EngineInterface, On } from 'claude-code'
 
 import type { HorusPhase, HorusVoice } from '../types'
-import { H as EYE_H, W as EYE_W } from './clients/eye-view'
+import { H as EYE_H, MARGIN, W as EYE_W } from './clients/eye-view'
 import { orbRows } from './clients/orb-view'
 import * as core from './core'
 
@@ -162,8 +162,8 @@ async function place($: $, id: string) {
 const lastAssistantText = async ($: $) =>
   (await $.session.messages().catch(() => [])).findLast(m => m.role === 'assistant' && m.text.trim() !== '')?.text ?? ''
 
-/** The eye's region width: its full 40 columns, narrower on a narrow surface. */
-export const eyeWidth = (columns = 80) => Math.max(16, Math.min(EYE_W, columns - 2))
+/** The eye's region width: its full 40 columns and the frame's margin, narrower on a narrow surface. */
+export const eyeWidth = (columns = 80) => Math.max(16, Math.min(EYE_W + MARGIN, columns - 2))
 
 // The eye, or the orb while speaking, sized explicitly so a surface never lays the region out at zero.
 function view(Client: ElementConstructor<ClientProps>, what: 'eye' | 'orb', p: HorusPhase, v: HorusVoice, columns = 80) {

@@ -1,7 +1,7 @@
 import type { ClientSurface } from 'claude-code'
 
 import { aqua, aquaDim, dim, orbCore, purple, violet } from '../theme'
-import { BLANK, draw, keyOf, merge, scatter, type Seg, shade, sparkle, type Sparkle } from './eye-view'
+import { BLANK, draw, keyOf, MARGIN, merge, scatter, type Seg, shade, sparkle, type Sparkle } from './eye-view'
 
 // The voice orb in the eye's ASCII shading: a lit sphere (bright orbCore highlight, aqua body, violet to purple
 // terminator) in an aqua glow, star sparkles around it, the spoken sentence typed out under it.
@@ -115,8 +115,8 @@ export function subtitleLines(sub: string, shown: number, width: number): string
   })
 }
 
-/** The sphere's width in a region `columns` wide (40 before the first layout). */
-export const sphereWidth = (columns: number) => Math.max(16, Math.min(W, columns || W))
+/** The sphere's width in a region `columns` wide: MARGIN inside it, never wider (40 before the first layout). */
+export const sphereWidth = (columns: number) => (columns > 0 ? Math.max(1, Math.min(W, columns - MARGIN)) : W)
 
 export default function OrbView(props: OrbProps, surface: ClientSurface<OrbState>) {
   const { Box, Text } = surface.elements

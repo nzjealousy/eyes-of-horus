@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, merge, openness, point,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, point,
   RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
 import { orbCell, orbRows, sphere, sphereWidth, subtitleLines, wrap } from '../hooks/clients/orb-view'
@@ -92,12 +92,14 @@ test('the eye is 40 x 13 by default and fits the region it is given', () => {
   expect(fit(0, 0)).toEqual([W, H])
   expect([W, H]).toEqual([40, 13])
   expect(fit(200, 3)).toEqual([64, 7])
+  // The frame keeps MARGIN columns of its region free and is never wider than it.
+  expect([fit(42, 13)[0], fit(30, 13)[0], fit(10, 13)[0], fit(1, 13)[0]]).toEqual([40, 28, 8, 1])
   for (const [w, h] of [[40, 13], [24, 9], [60, 17]] as const) {
     const rows = text(frame(init('idle', rnd), w, h))
     expect(rows.length).toBe(h)
     for (const row of rows) expect([...row].length).toBe(w)
   }
-  expect(eyeWidth(80)).toBe(40)
+  expect(eyeWidth(80)).toBe(40 + MARGIN)
   expect(eyeWidth(30)).toBe(28)
   expect(eyeWidth(5)).toBe(16)
 })
@@ -174,7 +176,7 @@ test('sparkles twinkle dim, bright, dim on their own phase, only in the dark aro
   expect(twinkle(0.1, 0)[0]).toBe(BLANK)
   expect(twinkle(0.4, 0)[0]).toBe('·')
   expect(twinkle(0.7, 0)[0]).toBe('+')
-  expect(twinkle(0.95, 1)).toEqual(['✦', goldBright])
+  expect(twinkle(0.95, 1)).toEqual(['*', goldBright])
 
   const isEmpty = (x: number, y: number) => y < 2 || y > 10
   const list = scatter(40, 13, isEmpty)
@@ -185,15 +187,16 @@ test('sparkles twinkle dim, bright, dim on their own phase, only in the dark aro
     for (const b of list) if (a !== b) expect(Math.abs(a.x - b.x) >= 3 || Math.abs(a.y - b.y) >= 2).toBe(true)
   }
 
-  // In a frame, every star cell is one the open eye leaves blank.
+  // In a frame, every star cell (one the sparkles changed) is one the open eye leaves blank.
   const dark = eyeCells(W, H, { ox: 0, oy: 0, open: 1, t: 0 })
   const m = init('idle', rnd)
   let stars = 0
   for (let t = 0; t < 4000; t += 400) {
     m.t = t
+    const bare = text(eyeCells(W, H, { ox: m.ox, oy: m.oy, open: openness(m), t }).map(merge))
     text(frame(m)).forEach((row, y) =>
       [...row].forEach((ch, x) => {
-        if (ch !== '·' && ch !== '✦') return
+        if (ch === [...(bare[y] ?? '')][x]) return
         stars++
         expect(dark[y]?.[x]?.[0]).toBe(BLANK)
       }),
@@ -221,7 +224,7 @@ test('the orb is a lit sphere in a glow with sparkles; its region grows with the
   expect(orbCell(-4, -4, 10, 0, true)[1]).toBe(orbCore)
   expect(orbRows('', 40)).toBe(13)
   expect(orbRows('All tests pass.', 40)).toBe(14)
-  expect([sphereWidth(0), sphereWidth(72), sphereWidth(30)]).toEqual([40, 40, 30])
+  expect([sphereWidth(0), sphereWidth(72), sphereWidth(30), sphereWidth(10)]).toEqual([40, 40, 28, 8])
   expect(wrap('aa bb cc', 5)).toEqual(['aa bb', 'cc'])
   expect(wrap('abcdefgh', 3)).toEqual(['abc', 'def', 'gh'])
   expect(subtitleLines('hello world', 3, 14)).toEqual(['[Horus] hel  ', ' '.repeat(5)])
@@ -283,16 +286,54 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
   expect(eye?.props.props).toEqual({ mode: 'thinking' })
-  expect([eye?.props.width, eye?.props.height]).toEqual([40, 13])
+  expect([eye?.props.width, eye?.props.height]).toEqual([40 + MARGIN, 13])
   const box = await ui.find({ type: 'Box' })
   expect([box?.props.width, box?.props.flexDirection, box?.props.justifyContent]).toEqual(['100%', 'row', 'center'])
   await ui.pointer({ type: 'move', x: 39, y: 6, in: 'eye' })
   await ui.advance(400)
-  const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate')
+  const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
   expect(rows.length).toBe(13)
   for (const r of rows) expect(r.props.mono).toBe(true)
   await ui.unmount()
 })
+
+// Only glyphs one cell wide in any mono face: printable ASCII, the no-break space and the middle dot.
+const NARROW = /^[ -~ ·]*$/
+
+test('every eye and orb row is one line of exactly the frame width, in single-width glyphs', () => {
+  const m = init('idle', rnd)
+  for (const columns of [30, 40, 60]) {
+    const [w, h] = fit(columns, 13)
+    expect(w).toBe(columns - MARGIN)
+    for (let t = 0; t < 4000; t += 300) {
+      m.t = t
+      for (const [rows, width] of [[text(frame(m, w, h)), w], [text(sphere(t, true, sphereWidth(columns))), Math.min(40, w)]] as const) {
+        for (const row of rows) {
+          expect([...row].length).toBe(width)
+          expect(NARROW.test(row)).toBe(true)
+        }
+      }
+    }
+  }
+  expect(NARROW.test(RAMP)).toBe(true)
+  for (let l = 0; l <= 1; l += 0.05) expect(NARROW.test(twinkle(l, 0)[0])).toBe(true)
+})
+
+for (const columns of [30, 40, 60]) {
+  test(`a ${columns}-column region draws rows of ${columns - MARGIN}, centred, each cut rather than wrapped`, async ($, on) => {
+    seed(on, { phase: 'idle', turnSeq: 2, tail: 0, voice: VOICE })
+    const ui = await $.ui.mount(row('eye-2-end', 'terminal'))
+    await ui.resize({ columns, rows: 13, in: 'eye' })
+    await ui.advance(400)
+    const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
+    expect(rows.length).toBe(13)
+    for (const r of rows) expect([...r.text].length).toBe(columns - MARGIN)
+    const [outer, frameBox] = await ui.findAll({ type: 'Box', in: 'eye' })
+    expect([outer?.props.width, outer?.props.alignItems]).toEqual([columns, 'center'])
+    expect([frameBox?.props.width, frameBox?.props.overflow]).toEqual([columns - MARGIN, 'hidden'])
+    await ui.unmount()
+  })
+}
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`stale, other plugins' and hidden rows draw nothing of ours (${surface})`, async ($, on) => {

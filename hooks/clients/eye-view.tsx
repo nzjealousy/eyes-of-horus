@@ -37,6 +37,8 @@ export const W = 40
 export const H = 13
 export const FRAME = 90
 export const RELEASE_MS = 2500
+/** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
+export const MARGIN = 2
 const SWEEP_MS = 1500
 /** Lid openness on each frame of a blink. */
 export const BLINK = [0.55, 0.12, 0, 0.3, 0.7]
@@ -86,7 +88,8 @@ const TWINKLE: ReadonlyArray<readonly [number, string]> = [
   [0.25, BLANK],
   [0.5, '·'],
   [0.8, '+'],
-  [1.01, '✦'],
+  // ASCII peak, not '✦': a mono face without it falls back to a wider glyph and the desktop row wraps.
+  [1.01, '*'],
 ]
 const HUES: ReadonlyArray<readonly [string, string]> = [
   [aqua, orbCore],
@@ -99,7 +102,7 @@ export const sparkleLevel = (s: Pick<Sparkle, 'period' | 'phase'>, t: number) =>
 
 /** A sparkle's cell at a level: dim dot, cross, star. */
 export function twinkle(level: number, hue: number): Seg {
-  const ch = TWINKLE.find(([at]) => level < at)?.[1] ?? '✦'
+  const ch = TWINKLE.find(([at]) => level < at)?.[1] ?? '*'
   const [mid, peak] = HUES[hue % HUES.length] ?? [aqua, orbCore]
   return [ch, ch === '·' ? dim : ch === '+' ? mid : peak]
 }
@@ -286,8 +289,8 @@ export const keyOf = (rows: Seg[][]) => rows.map(r => r.map(s => s.join('')).joi
 
 const asMode = (v: unknown): EyeMode => (v === 'thinking' || v === 'tool' ? v : 'idle')
 
-/** The region's size in cells: the laid-out region (40 x 13 before the first layout), kept in bounds. */
-export const fit = (columns: number, rows: number): [number, number] => [clamp(columns || W, 16, 64), clamp(rows || H, 7, 21)]
+/** The frame's size in cells: MARGIN columns inside the laid-out region, never wider (40 x 13 before the first layout). */
+export const fit = (columns: number, rows: number): [number, number] => [columns > 0 ? clamp(columns - MARGIN, 1, 64) : W, clamp(rows || H, 7, 21)]
 
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number, rows: number): boolean {
@@ -299,13 +302,13 @@ export function redraw(m: EyeState, columns: number, rows: number): boolean {
   return true
 }
 
-/** Rows of runs as Text lines, mono, on black. */
+/** Rows of runs as Text lines, mono, on black; a row that still overruns is cut, never wrapped. */
 export function draw(elements: ClientSurface['elements'], rows: Seg[][], w: number) {
   const { Box, Text } = elements
   return (
-    <Box flexDirection="column" width={w} backgroundColor={bg}>
+    <Box flexDirection="column" width={w} overflow="hidden" backgroundColor={bg}>
       {rows.map(row => (
-        <Text mono wrap="truncate">
+        <Text mono wrap="truncate-end">
           {row.map(([s, c]) => (
             <Text mono color={c}>
               {s}
@@ -335,5 +338,12 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
     m = s
   }
   m.mode = asMode(props?.mode)
-  return draw(surface.elements, m.rows, fit(surface.columns, surface.rows)[0])
+  const [w] = fit(surface.columns, surface.rows)
+  const { Box } = surface.elements
+  // The frame centred in its region, the margin split either side.
+  return (
+    <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN}>
+      {draw(surface.elements, m.rows, w)}
+    </Box>
+  )
 }

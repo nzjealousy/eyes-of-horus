@@ -11,9 +11,9 @@ type OrbState = { t: number; sub: string; shown: number; speaking: boolean; rows
 
 export const FRAME = 100
 export const TAG = '[Horus]'
-/** The sphere's frame, in cells, at most; narrower when the region is. */
-export const W = 40
-export const H = 13
+/** The sphere's frame, in cells, at most; smaller when the region is. */
+export const W = 82
+export const H = 16
 const CHARS_PER_FRAME = 2
 
 // Light from the upper left, toward the viewer.
@@ -49,7 +49,8 @@ const sparkCache = new Map<string, Sparkle[]>()
 
 /** The sphere's rows at time `t`, `w` x `h` cells: brighter, faster and rippling while speaking. */
 export function sphere(t: number, speaking: boolean, w = W, h = H): Seg[][] {
-  const r = Math.max(4, Math.min(w / 2 - 4, (h / 2 - 1.5) * 2))
+  // The sphere fills 90% of the frame on its tighter axis (y in half-rows, so h rows are 2h units).
+  const r = Math.max(4, 0.45 * Math.min(w, 2 * h))
   const at = (x: number, y: number): [number, number] => [x + 0.5 - w / 2, (y + 0.5 - h / 2) * 2]
   const cells = (tt: number, isSpeaking: boolean) =>
     Array.from({ length: h }, (_, y) =>
@@ -115,8 +116,11 @@ export function subtitleLines(sub: string, shown: number, width: number): string
   })
 }
 
-/** The sphere's width in a region `columns` wide: MARGIN inside it, never wider (40 before the first layout). */
+/** The sphere's width in a region `columns` wide: MARGIN inside it, never wider (W before the first layout). */
 export const sphereWidth = (columns: number) => (columns > 0 ? Math.max(1, Math.min(W, columns - MARGIN)) : W)
+
+/** The sphere's height in a region `rows` tall: what the subtitle leaves, at most H (H before the first layout). */
+export const sphereRows = (rows: number, sub: string, columns: number) => (rows > 0 ? Math.max(7, Math.min(H, rows - (orbRows(sub, columns) - H))) : H)
 
 export default function OrbView(props: OrbProps, surface: ClientSurface<OrbState>) {
   const { Box, Text } = surface.elements
@@ -124,11 +128,11 @@ export default function OrbView(props: OrbProps, surface: ClientSurface<OrbState
   const speaking = props?.speaking === true
   let m = surface.state
   if (m === undefined) {
-    const s: OrbState = { t: 0, sub, shown: 0, speaking, rows: sphere(0, speaking, sphereWidth(surface.columns)), key: '' }
+    const s: OrbState = { t: 0, sub, shown: 0, speaking, rows: sphere(0, speaking, sphereWidth(surface.columns), sphereRows(surface.rows, sub, surface.columns || 60)), key: '' }
     surface.every(FRAME, () => {
       s.t += FRAME
       s.shown = Math.min(s.sub.length, s.shown + CHARS_PER_FRAME)
-      const rows = sphere(s.t, s.speaking, sphereWidth(surface.columns))
+      const rows = sphere(s.t, s.speaking, sphereWidth(surface.columns), sphereRows(surface.rows, s.sub, surface.columns || 60))
       const key = `${s.shown}|${keyOf(rows)}`
       if (key === s.key) return
       s.rows = rows

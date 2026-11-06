@@ -33,8 +33,9 @@ export type EyeState = {
   key: string
 }
 
-export const W = 40
-export const H = 13
+/** The frame at most, in cells: the region is MARGIN wider. */
+export const W = 82
+export const H = 16
 export const FRAME = 90
 export const RELEASE_MS = 2500
 /** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
@@ -136,13 +137,19 @@ export function sparkle(grid: Seg[][], list: readonly Sparkle[], t: number) {
 
 export type Pose = { ox: number; oy: number; open: number; t: number }
 
-/** Eye units of a cell centre: x in columns, y in half-rows (a cell is about twice as tall as wide), scaled to 40 x 13. */
-function units(x: number, y: number, w: number, h: number): [number, number] {
-  const k = Math.min(w / W, h / H)
-  return [(x + 0.5 - w / 2) / k, ((y + 0.5 - h / 2) * 2) / k - 1.2]
-}
-
 const A = 15 // the almond's half-width
+// The drawn eye's extent in eye units, brow to lower lid and tail to tail, and the middle of it.
+const EXT_W = 2 * (A + 4)
+const EXT_H = 21
+const MID_Y = -2.6
+/** How much of the frame the eye fills, on its tighter axis. */
+const FILL = 0.9
+
+/** Eye units of a cell centre: x in columns, y in half-rows (a cell is about twice as tall as wide), scaled so the eye fills FILL of the frame. */
+function units(x: number, y: number, w: number, h: number): [number, number] {
+  const k = FILL * Math.min(w / EXT_W, (2 * h) / EXT_H)
+  return [(x + 0.5 - w / 2) / k, ((y + 0.5 - h / 2) * 2) / k + MID_Y]
+}
 /** Upper and lower lid heights at `px`: open, they part; at 0 they meet in one line just below the middle. */
 export function lids(px: number, open: number): [number, number] {
   const f = Math.max(0, 1 - (px / A) ** 2)
@@ -289,8 +296,8 @@ export const keyOf = (rows: Seg[][]) => rows.map(r => r.map(s => s.join('')).joi
 
 const asMode = (v: unknown): EyeMode => (v === 'thinking' || v === 'tool' ? v : 'idle')
 
-/** The frame's size in cells: MARGIN columns inside the laid-out region, never wider (40 x 13 before the first layout). */
-export const fit = (columns: number, rows: number): [number, number] => [columns > 0 ? clamp(columns - MARGIN, 1, 64) : W, clamp(rows || H, 7, 21)]
+/** The frame's size in cells: MARGIN columns inside the laid-out region and its rows, at most W x H (also before the first layout). */
+export const fit = (columns: number, rows: number): [number, number] => [columns > 0 ? clamp(columns - MARGIN, 1, W) : W, clamp(rows || H, 7, H)]
 
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number, rows: number): boolean {

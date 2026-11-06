@@ -5,7 +5,7 @@ import {
   advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, point,
   RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
-import { orbCell, orbRows, sphere, sphereWidth, subtitleLines, wrap } from '../hooks/clients/orb-view'
+import { orbCell, orbRows, sphere, sphereRows, sphereWidth, subtitleLines, wrap } from '../hooks/clients/orb-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
 import { gold, goldBright, orbCore, text as white } from '../hooks/theme'
 
@@ -84,22 +84,25 @@ test('runs: one per colour, a blank joins its neighbour', () => {
   expect(merge([[BLANK, 'y'], ['a', 'x']])).toEqual([[`${BLANK}a`, 'x']])
   const rows = frame(init('idle', rnd))
   for (const row of rows) for (let i = 1; i < row.length; i++) expect(row[i]?.[1] === row[i - 1]?.[1]).toBe(false)
-  // A 40 x 13 frame is far fewer runs than cells.
-  expect(rows.reduce((n, r) => n + r.length, 0) < 200).toBe(true)
+  // An 82 x 16 frame is far fewer runs than cells.
+  expect(rows.reduce((n, r) => n + r.length, 0) < (W * H) / 3).toBe(true)
 })
 
-test('the eye is 40 x 13 by default and fits the region it is given', () => {
+test('the eye is 82 x 16 by default and fits the region it is given', () => {
   expect(fit(0, 0)).toEqual([W, H])
-  expect([W, H]).toEqual([40, 13])
-  expect(fit(200, 3)).toEqual([64, 7])
+  expect([W, H]).toEqual([82, 16])
+  expect(fit(200, 3)).toEqual([82, 7])
+  expect(fit(84, 40)).toEqual([82, 16])
+  expect(fit(84, 10)).toEqual([82, 10])
   // The frame keeps MARGIN columns of its region free and is never wider than it.
   expect([fit(42, 13)[0], fit(30, 13)[0], fit(10, 13)[0], fit(1, 13)[0]]).toEqual([40, 28, 8, 1])
-  for (const [w, h] of [[40, 13], [24, 9], [60, 17]] as const) {
+  for (const [w, h] of [[82, 16], [40, 13], [24, 9], [60, 17]] as const) {
     const rows = text(frame(init('idle', rnd), w, h))
     expect(rows.length).toBe(h)
     for (const row of rows) expect([...row].length).toBe(w)
   }
-  expect(eyeWidth(80)).toBe(40 + MARGIN)
+  expect(eyeWidth(200)).toBe(82 + MARGIN)
+  expect(eyeWidth(80)).toBe(78)
   expect(eyeWidth(30)).toBe(28)
   expect(eyeWidth(5)).toBe(16)
 })
@@ -134,12 +137,14 @@ test('the gaze takes nine targets, follows the pointer and lets go 2.5 s after t
   expect(GAZES.length).toBe(9)
   expect(gazeToward(0, 0)).toEqual([0, 0])
   expect(gazeToward(-4, 1)).toEqual([0, 0])
-  expect(gazeToward(-5, -2)).toEqual([-1, -1])
-  expect(gazeToward(6, 3)).toEqual([1, 1])
+  // The dead zone is a tenth of the frame width: 8.2 columns at 82.
+  expect(gazeToward(-8, -2)).toEqual([0, -1])
+  expect(gazeToward(-9, -2)).toEqual([-1, -1])
+  expect(gazeToward(6, 3, 40)).toEqual([1, 1])
 
   const m = init('idle', rnd)
   m.nextSaccade = 1e9
-  point(m, 39, 6)
+  point(m, 81, 8)
   expect(look(m)).toEqual([1, 0])
   for (let i = 0; i < 10; i++) advance(m, FRAME, rnd)
   // The iris eases over and settles within ten frames.
@@ -214,17 +219,19 @@ test('the eye redraws only when its frame changes', () => {
 
 test('the orb is a lit sphere in a glow with sparkles; its region grows with the subtitle', () => {
   const rows = text(sphere(1000, true))
-  expect(rows.length).toBe(13)
-  for (const row of rows) expect([...row].length).toBe(40)
+  expect(rows.length).toBe(16)
+  for (const row of rows) expect([...row].length).toBe(82)
   expect([...(text(sphere(0, false, 24, 13))[0] ?? '')].length).toBe(24)
   // Lit from the upper left; the glow fades to nothing.
   expect(orbCell(-4, -4, 10, 0, false)[0] > orbCell(4, 4, 10, 0, false)[0]).toBe(true)
   expect(orbCell(0, 0, 10, 0, false)[0] > 0.5).toBe(true)
   expect(orbCell(25, 0, 10, 0, false)[0]).toBe(0)
   expect(orbCell(-4, -4, 10, 0, true)[1]).toBe(orbCore)
-  expect(orbRows('', 40)).toBe(13)
-  expect(orbRows('All tests pass.', 40)).toBe(14)
-  expect([sphereWidth(0), sphereWidth(72), sphereWidth(30), sphereWidth(10)]).toEqual([40, 40, 28, 8])
+  expect(orbRows('', 40)).toBe(16)
+  expect(orbRows('All tests pass.', 40)).toBe(17)
+  expect([sphereWidth(0), sphereWidth(84), sphereWidth(200), sphereWidth(30), sphereWidth(10)]).toEqual([82, 82, 82, 28, 8])
+  // The sphere takes the rows the subtitle leaves, at most 16, at least 7.
+  expect([sphereRows(0, 'x', 40), sphereRows(17, 'All tests pass.', 40), sphereRows(12, 'All tests pass.', 40), sphereRows(3, '', 40)]).toEqual([16, 16, 11, 7])
   expect(wrap('aa bb cc', 5)).toEqual(['aa bb', 'cc'])
   expect(wrap('abcdefgh', 3)).toEqual(['abc', 'def', 'gh'])
   expect(subtitleLines('hello world', 3, 14)).toEqual(['[Horus] hel  ', ' '.repeat(5)])
@@ -286,14 +293,17 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
   expect(eye?.props.props).toEqual({ mode: 'thinking' })
-  expect([eye?.props.width, eye?.props.height]).toEqual([40 + MARGIN, 13])
+  expect([eye?.props.width, eye?.props.height]).toEqual([82 + MARGIN, 16])
   const box = await ui.find({ type: 'Box' })
   expect([box?.props.width, box?.props.flexDirection, box?.props.justifyContent]).toEqual(['100%', 'row', 'center'])
-  await ui.pointer({ type: 'move', x: 39, y: 6, in: 'eye' })
+  await ui.pointer({ type: 'move', x: 81, y: 8, in: 'eye' })
   await ui.advance(400)
   const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
-  expect(rows.length).toBe(13)
-  for (const r of rows) expect(r.props.mono).toBe(true)
+  expect(rows.length).toBe(16)
+  for (const r of rows) {
+    expect(r.props.mono).toBe(true)
+    expect([...r.text].length).toBe(82)
+  }
   await ui.unmount()
 })
 
@@ -302,12 +312,12 @@ const NARROW = /^[ -~ ·]*$/
 
 test('every eye and orb row is one line of exactly the frame width, in single-width glyphs', () => {
   const m = init('idle', rnd)
-  for (const columns of [30, 40, 60]) {
-    const [w, h] = fit(columns, 13)
+  for (const columns of [30, 40, 60, 84]) {
+    const [w, h] = fit(columns, 16)
     expect(w).toBe(columns - MARGIN)
     for (let t = 0; t < 4000; t += 300) {
       m.t = t
-      for (const [rows, width] of [[text(frame(m, w, h)), w], [text(sphere(t, true, sphereWidth(columns))), Math.min(40, w)]] as const) {
+      for (const [rows, width] of [[text(frame(m, w, h)), w], [text(sphere(t, true, sphereWidth(columns))), Math.min(82, w)]] as const) {
         for (const row of rows) {
           expect([...row].length).toBe(width)
           expect(NARROW.test(row)).toBe(true)
@@ -319,7 +329,7 @@ test('every eye and orb row is one line of exactly the frame width, in single-wi
   for (let l = 0; l <= 1; l += 0.05) expect(NARROW.test(twinkle(l, 0)[0])).toBe(true)
 })
 
-for (const columns of [30, 40, 60]) {
+for (const columns of [30, 40, 60, 84]) {
   test(`a ${columns}-column region draws rows of ${columns - MARGIN}, centred, each cut rather than wrapped`, async ($, on) => {
     seed(on, { phase: 'idle', turnSeq: 2, tail: 0, voice: VOICE })
     const ui = await $.ui.mount(row('eye-2-end', 'terminal'))
@@ -358,7 +368,7 @@ test('speaking shows the orb with its subtitle in the same row', async ($, on) =
   const ui = await $.ui.mount(row('eye-2-end', 'terminal'))
   const orb = await ui.find({ type: 'Client', key: 'orb' })
   expect(orb?.props.props).toEqual({ speaking: true, subtitle: 'All tests pass.' })
-  expect(orb?.props.height).toBe(14)
+  expect([orb?.props.width, orb?.props.height]).toEqual([82 + MARGIN, 17])
   await ui.resize({ columns: 40, rows: 12, in: 'orb' })
   await ui.advance(2000)
   expect(await ui.find({ type: 'Text', in: 'orb', text: '[Horus]' })).toBeDefined()

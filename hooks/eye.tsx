@@ -166,7 +166,7 @@ const lastAssistantText = async ($: $) =>
 export const eyeWidth = (columns = 80) => Math.max(16, Math.min(EYE_W + MARGIN, columns - 2))
 
 // The eye, or the orb while speaking, sized explicitly so a surface never lays the region out at zero.
-// An unknown viewport gets the full size; the Client still clamps to the region it is laid out in.
+// An unknown viewport gets the full size; the Client still clamps its width to the region it is laid out in.
 function view(Client: ElementConstructor<ClientProps>, what: 'eye' | 'orb', p: HorusPhase, v: HorusVoice, columns = EYE_W + MARGIN + 2) {
   if (what === 'orb') {
     const width = Math.max(24, Math.min(ORB_W + MARGIN, columns - 2))

@@ -296,12 +296,16 @@ export const keyOf = (rows: Seg[][]) => rows.map(r => r.map(s => s.join('')).joi
 
 const asMode = (v: unknown): EyeMode => (v === 'thinking' || v === 'tool' ? v : 'idle')
 
-/** The frame's size in cells: MARGIN columns inside the laid-out region and its rows, at most W x H (also before the first layout). */
-export const fit = (columns: number, rows: number): [number, number] => [columns > 0 ? clamp(columns - MARGIN, 1, W) : W, clamp(rows || H, 7, H)]
+/**
+ * The frame's size in cells: MARGIN columns inside the laid-out region, at most W (also before the first layout), and
+ * always H rows. The desktop lays a Client out as tall as what it draws, not as its `height` (asked for 16, a 7-row
+ * frame measured 7), so its rows only echo the frame and fitting to them locked the eye small.
+ */
+export const fit = (columns: number): [number, number] => [columns > 0 ? clamp(columns - MARGIN, 1, W) : W, H]
 
 /** Draws the frame again; true when it changed. */
-export function redraw(m: EyeState, columns: number, rows: number): boolean {
-  const next = frame(m, ...fit(columns, rows))
+export function redraw(m: EyeState, columns: number): boolean {
+  const next = frame(m, ...fit(columns))
   const key = keyOf(next)
   if (key === m.key) return false
   m.rows = next
@@ -333,19 +337,19 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
     const s = init(asMode(props?.mode), Math.random)
     surface.every(FRAME, () => {
       advance(s, FRAME, Math.random)
-      if (redraw(s, surface.columns, surface.rows)) surface.setState(s)
+      if (redraw(s, surface.columns)) surface.setState(s)
     })
     surface.onPointer(ev => {
       if (ev.type !== 'move' && ev.type !== 'enter' && ev.type !== 'down') return
-      point(s, ev.x, ev.y, ...fit(surface.columns, surface.rows))
+      point(s, ev.x, ev.y, ...fit(surface.columns))
       surface.setState(s)
     })
-    redraw(s, surface.columns, surface.rows)
+    redraw(s, surface.columns)
     surface.setState(s)
     m = s
   }
   m.mode = asMode(props?.mode)
-  const [w] = fit(surface.columns, surface.rows)
+  const [w] = fit(surface.columns)
   const { Box } = surface.elements
   // The frame centred in its region, the margin split either side.
   return (

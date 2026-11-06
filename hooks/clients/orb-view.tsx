@@ -119,20 +119,18 @@ export function subtitleLines(sub: string, shown: number, width: number): string
 /** The sphere's width in a region `columns` wide: MARGIN inside it, never wider (W before the first layout). */
 export const sphereWidth = (columns: number) => (columns > 0 ? Math.max(1, Math.min(W, columns - MARGIN)) : W)
 
-/** The sphere's height in a region `rows` tall: what the subtitle leaves, at most H (H before the first layout). */
-export const sphereRows = (rows: number, sub: string, columns: number) => (rows > 0 ? Math.max(7, Math.min(H, rows - (orbRows(sub, columns) - H))) : H)
-
 export default function OrbView(props: OrbProps, surface: ClientSurface<OrbState>) {
   const { Box, Text } = surface.elements
   const sub = typeof props?.subtitle === 'string' ? props.subtitle : ''
   const speaking = props?.speaking === true
   let m = surface.state
   if (m === undefined) {
-    const s: OrbState = { t: 0, sub, shown: 0, speaking, rows: sphere(0, speaking, sphereWidth(surface.columns), sphereRows(surface.rows, sub, surface.columns || 60)), key: '' }
+    // Always H rows tall: the desktop lays a Client out as tall as what it draws, so its rows are no room to fit.
+    const s: OrbState = { t: 0, sub, shown: 0, speaking, rows: sphere(0, speaking, sphereWidth(surface.columns)), key: '' }
     surface.every(FRAME, () => {
       s.t += FRAME
       s.shown = Math.min(s.sub.length, s.shown + CHARS_PER_FRAME)
-      const rows = sphere(s.t, s.speaking, sphereWidth(surface.columns), sphereRows(surface.rows, s.sub, surface.columns || 60))
+      const rows = sphere(s.t, s.speaking, sphereWidth(surface.columns))
       const key = `${s.shown}|${keyOf(rows)}`
       if (key === s.key) return
       s.rows = rows

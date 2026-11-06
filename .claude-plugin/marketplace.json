@@ -1,0 +1,5 @@
+{
+  "name": "eyes-of-horus",
+  "owner": { "name": "nzjealousy" },
+  "plugins": [{ "name": "eyes-of-horus", "source": "./" }]
+}

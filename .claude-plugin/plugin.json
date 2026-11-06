@@ -1,0 +1,8 @@
+{
+  "name": "eyes-of-horus",
+  "version": "0.1.0",
+  "description": "Gold-and-obsidian restyle of Claude Code: an ASCII Eye of Horus and voice orb under replies, a ponytail and savvy-flow dashboard with a heartbeat bar above the prompt, and a Gods pane of agents and the session rail.",
+  "author": { "name": "nzjealousy" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

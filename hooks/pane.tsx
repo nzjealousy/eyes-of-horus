@@ -50,7 +50,7 @@ export const tierOf = (type: string): string | undefined => {
 
 // What each savvy-flow tier runs on (its agent definitions), for the `tier · model · effort` line.
 const TIER_MODEL: Record<string, string> = {
-  fable: 'Fable · high',
+  fable: 'Opus · max',
   heavy: 'Opus · xhigh',
   careful: 'Opus · high',
   medium: 'Opus · medium',

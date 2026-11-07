@@ -8,10 +8,10 @@ type ClockState = { at: number; base: number; ticks: number }
 export function fmtElapsed(ms: number) {
   const s = Math.max(0, Math.floor(ms / 1000))
   const pad = (n: number) => String(n).padStart(2, '0')
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m${pad(s % 60)}s`
-  return `${Math.floor(m / 60)}h${pad(m % 60)}m`
+  // mm:ss, h:mm:ss past an hour (savvy-flow's clock).
+  const h = Math.floor(s / 3600)
+  const mm = pad(Math.floor((s % 3600) / 60))
+  return h > 0 ? `${h}:${mm}:${pad(s % 60)}` : `${mm}:${pad(s % 60)}`
 }
 
 const AgentClock: ClientModule<ClockProps, ClockState> = (props, surface) => {

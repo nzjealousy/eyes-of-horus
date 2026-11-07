@@ -12,6 +12,7 @@ const terminalBusy = atom({ plugin: 'eyes-of-horus', key: 'terminalBusy' } as co
 const progress = atom({ plugin: 'eyes-of-horus', key: 'progress' } as const, core.progress.initial, { shape: core.progress.shape! })
 const ponytail = atom({ plugin: 'eyes-of-horus', key: 'ponytail' } as const, core.ponytail.initial, { shape: core.ponytail.shape! })
 const usage = atom({ plugin: 'eyes-of-horus', key: 'usage' } as const, core.usage.initial, { shape: core.usage.shape! })
+const voice = atom({ plugin: 'eyes-of-horus', key: 'voice' } as const, core.voice.initial, { shape: core.voice.shape! })
 
 const LEVELS: readonly HorusPonytailLevel[] = ['off', 'lite', 'full', 'ultra']
 // Letters, not digits: a bare digit in an empty composer can press a band Button.
@@ -164,9 +165,29 @@ async function setLevel($: EngineInterface, level: HorusPonytailLevel) {
 
 export const registerBand = (on: On) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return next(e)
+    if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e)
     const ph = await read($, phase)
     const tl = await read($, tail)
+    const speaking = (await read($, voice)).speaking
+    const now0 = await $.clock.now()
+    const { Client, Box: Column } = $.ui.resolve(e)
+    // The pulse is always drawn: under a survey too, and as the speech wave while anything speaks.
+    const pulse = (
+      <Client
+        key="horus:rail"
+        module="./clients/prompt-rail.tsx"
+        props={{ mode: speaking ? 'speaking' : ph, tailAgeMs: tl > 0 ? now0 - tl : -1 }}
+        width={e.props.bodyColumns}
+        height={2}
+      />
+    )
+    if (e.props.hasSurvey)
+      return (
+        <Column flexDirection="column">
+          {await next(e)}
+          {pulse}
+        </Column>
+      )
     const busy = await read($, terminalBusy)
     const p = await read($, progress)
     const now = await $.clock.now()
@@ -176,7 +197,7 @@ export const registerBand = (on: On) => {
     const fit = budget(e.props.maxRows, dash, view)
 
     const ui = $.ui.resolve(e)
-    const { Box, Text, Button, Client } = ui
+    const { Box, Text, Button } = ui
     // The terminal's table may carry an Svg that draws nothing: test the surface too.
     const Svg = e.surface === 'desktop' && 'Svg' in ui ? ui.Svg : null
     // bodyColumns counts terminal cells; a desktop draws Buttons wider, so rows there are left to flex.
@@ -290,13 +311,7 @@ export const registerBand = (on: On) => {
         {row1}
         {chips}
         {flow}
-        <Client
-          key="horus:rail"
-          module="./clients/prompt-rail.tsx"
-          props={{ mode: ph, tailAgeMs: tl > 0 ? now - tl : -1 }}
-          width={cols}
-          height={2}
-        />
+        {pulse}
       </Box>
     )
   }).catch(($, e, next) => next(e))

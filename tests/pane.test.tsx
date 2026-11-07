@@ -6,7 +6,11 @@ import { fmtElapsed } from '../hooks/clients/agent-clock'
 import type { BackdropApi, Card } from '../hooks/pane'
 import {
   agentSvg,
+  barFill,
   buildCards,
+  railEntries,
+  roster,
+  scrollOffset,
   cardLayout,
   clockSvg,
   elapsedLabel,
@@ -85,7 +89,7 @@ test('tiers come from savvy-flow agent types; groups split running, finished (ne
 })
 
 test('formatting: elapsed, tokens, cost, truncation, rail window', async () => {
-  expect([fmtElapsed(-5), fmtElapsed(42_900), fmtElapsed(187_000), fmtElapsed(3_725_000)]).toEqual(['0s', '42s', '3m07s', '1h02m'])
+  expect([fmtElapsed(-5), fmtElapsed(42_900), fmtElapsed(187_000), fmtElapsed(3_725_000)]).toEqual(['00:00', '00:42', '03:07', '1:02:05'])
   expect([fmtTokens(950), fmtTokens(12_400), fmtTokens(2_500_000)]).toEqual(['950', '12k', '2.5M'])
   expect([fmtCost(1.5), fmtCost(12.34)]).toEqual(['≈$1.50', '≈$12.3'])
   expect([trunc('abcdef', 4), trunc('abc', 4), trunc('abc', 0)]).toEqual(['abc…', 'abc', ''])
@@ -94,7 +98,7 @@ test('formatting: elapsed, tokens, cost, truncation, rail window', async () => {
   expect(railWindow([], 3)).toEqual([])
   const c = (status: Card['status'], ms?: number): Card => ({ key: 'k', depth: 0, type: 'x', title: 't', status, ...(ms === undefined ? {} : { ms }) })
   // A refused run (failed in under a second) and a card with no start read '—'.
-  expect([elapsedLabel(c('failed', 0)), elapsedLabel(c('failed', 1500)), elapsedLabel(c('done', 0)), elapsedLabel(c('pending'))]).toEqual(['—', '1s', '0s', '—'])
+  expect([elapsedLabel(c('failed', 0)), elapsedLabel(c('failed', 1500)), elapsedLabel(c('done', 0)), elapsedLabel(c('pending'))]).toEqual(['—', '00:01', '00:00', '—'])
 })
 
 // The pane's desktop width for 30..60 body columns, as the render computes it.
@@ -136,7 +140,7 @@ test('card layout: at 30..60 columns every text stays in its slot, clear of the 
     fits(textWidth(p.who, 11) + 6 + textWidth(p.meta, 11), p.lineW)
     const use = { contextPct: 0, contextUsed: 0, contextMax: 0, tokensTotal: 123_456_789, costUsd: 1234.5, agentTimeMs: 3_599_000, turns: 1 }
     const h = headerLayout(W, 'Gods pane overlap fix for the Eyes of Horus mod', use)
-    fits(textWidth('Agents', 14) + textWidth(h.rest, 14), W - TOGGLE_W - 8) // left of the Collapse corner
+    fits(textWidth('Gods', 14) + textWidth(h.rest, 14), W - TOGGLE_W - 8) // left of the Collapse corner
     for (const v of h.values) fits(textWidth(v, 15), h.tw - 12)
   }
 })
@@ -145,8 +149,8 @@ test('the running clock ticks inside the Svg: digit columns delayed by the elaps
   const run = (ms: number): Card => ({ key: 'k', depth: 0, type: 'x', title: 't', status: 'running', ms })
   const fresh = clockSvg(100, 20, 12, run(42_000)).svg
   expect(fresh).toContain('animation-delay:-42s')
-  expect(fresh).toContain('animation:eoh-off 1s 18s forwards') // the seconds-only form leaves at 60s
-  expect(fresh).toContain('<g style="animation:eoh-off 18s">') // and the m/s form arrives then
+  expect(fresh).toContain('animation:eoh-off 1s 3558s forwards') // the mm:ss form leaves at an hour
+  expect(fresh).toContain('<g style="animation:eoh-off 3558s">') // and the h:mm:ss form arrives then
   const later = clockSvg(100, 20, 12, run(263_000))
   expect(later.svg).not.toContain('eoh-off 1s -') // no window already past
   expect(later.svg).toContain('animation:eoh-off 1s 3337s forwards')
@@ -171,7 +175,7 @@ test('card drawings: one well-formed Svg each, walking only while running, escap
   expect(r).toContain('Horus · careful')
   expect(r).toContain('Opus · high')
   expect(r).toContain('12k tokens')
-  expect(r).toContain('height="66"')
+  expect(r).toContain('height="78"')
   const d = agentSvg(320, done!)
   expect(d).not.toContain('eoh-walk')
   expect(d).not.toContain('class="sheen"')
@@ -253,21 +257,21 @@ test('the pane draws cards and the rail, and a press opens the agent, on every s
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect((await ui.find({ type: 'Text', text: /turns 3 · agents 2m05s · ctx 42%/ }))?.text).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /turns 3 · 02:05 · ctx 42%/ }))?.text).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeDefined()
     expect((await ui.findAll({ type: 'Text', text: '│' })).length).toBe(2)
     if (surface === 'terminal') {
-      expect((await ui.find({ type: 'Text', text: /^3s$/ }))?.text).toBe('3s')
+      expect((await ui.find({ type: 'Text', text: /^00:03$/ }))?.text).toBe('00:03')
       // Running card ticks in its Client: 65s at render, then +2 ticks.
-      expect((await ui.find({ type: 'Text', text: /1m05s/, in: 'clock:a1' }))?.text).toBe('1m05s')
+      expect((await ui.find({ type: 'Text', text: /01:05/, in: 'clock:a1' }))?.text).toBe('01:05')
       await ui.advance(2000)
-      expect((await ui.find({ type: 'Text', text: /1m0\ds/, in: 'clock:a1' }))?.text).toBe('1m07s')
+      expect((await ui.find({ type: 'Text', text: /01:0\d/, in: 'clock:a1' }))?.text).toBe('01:07')
     } else {
       // The desktop card's clock is in its Svg (CSS-stepped from 65s), the time in its alt; no Text lies over the card.
       const alts = (await ui.findAll({ type: 'Svg' })).map(s => [String(s.props.alt), String(s.props.source)] as const)
-      expect(alts.find(([a]) => a.startsWith('Done task'))?.[0]).toContain(', 3s')
+      expect(alts.find(([a]) => a.startsWith('Done task'))?.[0]).toContain(', 00:03')
       expect(alts.find(([a]) => a.startsWith('Build the very long'))?.[1]).toContain('animation-delay:-65s')
-      expect(await ui.find({ type: 'Text', text: /^\d+s$/ })).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: /^\d\d:\d\d$/ })).toBeUndefined()
       expect(await ui.find({ type: 'Client' })).toBeUndefined()
     }
     // The open control draws only its arrow (a desktop draws a Button's label as text).
@@ -287,14 +291,17 @@ test('desktop: header tiles, grid, one Svg per card, groups and a planned card; 
   const svgs = await desk.findAll({ type: 'Svg' })
   const alts = svgs.map(s => String(s.props.alt))
   expect(String(svgs[0]?.props.source)).toContain('<pattern id="d"') // the header's patch of the grid
-  expect(alts).toContain('Agents: ≈$0.42, 12k tokens, 2m05s')
+  expect(alts).toContain('Gods: ≈$0.42, 12k tokens, 02:05')
+  expect(alts).toContain('Slaves')
+  expect(alts.some(a => a.startsWith('Ra waiting') && a.includes('Horus running'))).toBe(true)
+  expect(alts.some(a => a.includes('crab-designer waiting'))).toBe(true)
   expect(alts.some(a => a.startsWith('Build the very long') && a.includes('Horus · careful, running'))).toBe(true)
   expect(alts.some(a => a.startsWith('Done task') && a.includes('finished'))).toBe(true)
   expect(alts).toContain('Planned task: Bastet · light, planned')
   for (const s of svgs) expect(String(s.props.source).length).toBeLessThan(131072)
   for (const label of ['Running · 1', 'Finished · 1', 'Planned · 1']) expect(alts).toContain(label)
-  // Rows stack down one grid: each drawing's pattern is phased by the heights above it (header 78, head 24, card 66).
-  expect(svgs.map(s => /<pattern id="d" y="(-?\d+)"/.exec(String(s.props.source))?.[1])).toEqual(['0', '-14', '-6', '-8', '0', '-2', '-10'])
+  // Rows stack down one grid: each drawing's pattern is phased by the heights above it (header 78, roster 60, head 24, card 78, plan 46).
+  expect(svgs.map(s => /<pattern id="d" y="(-?\d+)"/.exec(String(s.props.source))?.[1])).toEqual(['0', '-14', '-10', '-2', '0', '-8', '-6', '-14', '-12', '-4'])
   await desk.unmount()
 
   const term = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -304,7 +311,7 @@ test('desktop: header tiles, grid, one Svg per card, groups and a planned card; 
   await term.unmount()
 })
 
-test('Session and Agents fold and unfold', async ($, on) => {
+test('The Hall of Truth and Gods fold and unfold', async ($, on) => {
   seed(on, SEEDED)
   // Each step mounts afresh, so the check reads what the press wrote without leaning on redraw timing.
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -315,12 +322,12 @@ test('Session and Agents fold and unfold', async ($, on) => {
       return $.ui.mount({ ...PANE, surface })
     }
     let ui = await $.ui.mount({ ...PANE, surface })
-    expect((await ui.find({ key: 'session-toggle' }))?.text).toBe('▾ Session')
+    expect((await ui.find({ key: 'session-toggle' }))?.text).toBe('▾ The Hall of Truth:')
     expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Collapse')
     await ui.unmount()
 
     ui = await press('session-toggle')
-    expect((await ui.find({ key: 'session-toggle' }))?.text).toBe('▸ Session')
+    expect((await ui.find({ key: 'session-toggle' }))?.text).toBe('▸ The Hall of Truth:')
     expect(await ui.find({ type: 'Text', text: /turns 3/ })).toBeDefined() // the one-line stats stay
     expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeUndefined()
     await ui.unmount()
@@ -328,8 +335,10 @@ test('Session and Agents fold and unfold', async ($, on) => {
     ui = await press('agents-toggle')
     expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Expand')
     expect(await ui.find({ key: 'agent:a1' })).toBeUndefined()
-    if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))).toContain('1 run · 1 ok · 0 fail · 1 planned')
-    else expect(await ui.find({ type: 'Text', text: /1 run · 1 ok · 0 fail/ })).toBeDefined()
+    // Folded: the summary line and one strip of every sprite.
+    if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.source).includes('agents 2 · run 1'))).toBe(true)
+    else expect(await ui.find({ type: 'Text', text: /agents 2 · run 1/ })).toBeDefined()
+    if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Ra waiting') && String(s.props.alt).includes('crab-designer'))).toBe(true)
     await ui.unmount()
 
     // Back open for the next surface.
@@ -349,8 +358,9 @@ test('empty state, and other panes and backdrops go to the engine', async ($, on
   })
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))).toContain('No agents yet.')
-    else expect(await ui.find({ type: 'Text', text: 'No agents yet.' })).toBeDefined()
+    // No agents yet: the roster still shows every god and worker, waiting.
+    if (surface === 'desktop') expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Ra waiting'))).toBe(true)
+    else expect(await ui.find({ type: 'Text', text: '·Ra ' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Nothing yet/ })).toBeDefined()
     await ui.unmount()
     const other = await $.ui.mount({ ...PANE, requestId: 'other', surface })
@@ -387,5 +397,26 @@ test('session start sets the backdrop and opens the pane, and survives refusals'
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1 }, rateLimits: [] } }))
   const r = await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   expect(r.cwd).toBe('/')
-  expect(calls).toEqual(['backdrop:horus:#0c0816', 'open:horus:Gods'])
+  expect(calls).toEqual(['backdrop:horus:#0c0816', 'open:horus:The Field of Reeds (Aaru)'])
+})
+
+test('bars fill from step reports; the Hall of Truth scrolls within the log; the roster lists every god and worker', async () => {
+  expect([
+    barFill({ status: 'running', steps: { done: 3, total: 7, note: '' } }),
+    barFill({ status: 'running' }),
+    barFill({ status: 'done' }),
+    barFill({ status: 'pending' }),
+  ]).toEqual([3 / 7, undefined, 1, 0])
+  const [c] = buildCards([{ ...A('a1', 'Tune', 'running', undefined, 'savvy-careful'), steps: { done: 5, total: 7, note: 'Rewriting BALANCE.md' } }], null, 9000)
+  const svg = agentSvg(400, c!)
+  expect(svg).toContain('Tasks 5/7')
+  expect(svg).toContain('71%')
+  expect(svg).toContain('Rewriting BALANCE.md')
+  expect(railEntries(9)).toBe(5)
+  // A wheel up (negative) goes back in time, never past the oldest; down returns to following the newest.
+  expect([scrollOffset(0, -3, 20, 5), scrollOffset(14, -3, 20, 5), scrollOffset(2, 5, 20, 5), scrollOffset(0, -3, 4, 5)]).toEqual([3, 15, 0, 0])
+  const r = roster([A('x', 'look', 'running', undefined, 'Explore'), A('y', 'odd', 'done', 2, 'my-plugin:helper')])
+  expect(r.gods.map(m => m.name)).toEqual(['Ra', 'Anubis', 'Horus', 'Thoth', 'Bastet'])
+  expect(r.slaves.find(m => m.name === 'Explore')?.isRunning).toBe(true)
+  expect(r.slaves.some(m => m.name === 'helper')).toBe(true) // a type seen this session joins the workers
 })

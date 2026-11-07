@@ -3,7 +3,6 @@ import type { ClientProps, ElementConstructor, EngineInterface, On } from 'claud
 
 import type { HorusPhase, HorusVoice } from '../types'
 import { H as EYE_H, MARGIN, W as EYE_W } from './clients/eye-view'
-import { orbRows, W as ORB_W } from './clients/orb-view'
 import * as core from './core'
 
 type $ = EngineInterface
@@ -25,9 +24,10 @@ const TEST_MIN_MS = 2500
 // One row per turn, placed at its start; a second at its end, so the idle eye sits below the reply.
 export const rowId = (p: HorusPhase, seq: number) => (p === 'idle' ? `eye-${seq}-end` : `eye-${seq}`)
 
-/** What the row draws: the orb while anything speaks, else the eye except while output shows. */
-export function show(p: HorusPhase, tailAt: number, now: number, speaking: boolean): 'orb' | 'eye' | 'none' {
-  if (speaking) return 'orb'
+/** What the row draws: the eye, except while output shows and just after a reply (speech keeps it up; the pulse
+ * above the prompt shows the voice). */
+export function show(p: HorusPhase, tailAt: number, now: number, speaking: boolean): 'eye' | 'none' {
+  if (speaking) return 'eye'
   if (p === 'outputting') return 'none'
   if (p === 'idle' && tailAt > 0 && now - tailAt < HIDE_MS) return 'none'
   return 'eye'
@@ -136,7 +136,7 @@ async function speakAll($: $, sentences: string[], seq: number) {
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-// `/voiceover test`: one real utterance, with the orb up for at least a moment so it can be seen.
+// `/voiceover test`: one real utterance, with the speech wave up for at least a moment so it can be seen.
 async function speechTest($: $) {
   await update($, voice, v => ({ ...v, speaking: true, subtitle: TEST_LINE, sentenceIndex: 0 }))
   const t0 = await $.clock.now()
@@ -165,21 +165,9 @@ const lastAssistantText = async ($: $) =>
 /** The eye's region width: its full frame and the frame's margin, narrower on a narrow surface. */
 export const eyeWidth = (columns = 80) => Math.max(16, Math.min(EYE_W + MARGIN, columns - 2))
 
-// The eye, or the orb while speaking, sized explicitly so a surface never lays the region out at zero.
+// The eye, sized explicitly so a surface never lays the region out at zero.
 // An unknown viewport gets the full size; the Client still clamps its width to the region it is laid out in.
-function view(Client: ElementConstructor<ClientProps>, what: 'eye' | 'orb', p: HorusPhase, v: HorusVoice, columns = EYE_W + MARGIN + 2) {
-  if (what === 'orb') {
-    const width = Math.max(24, Math.min(ORB_W + MARGIN, columns - 2))
-    return (
-      <Client
-        key="orb"
-        module="./clients/orb-view.tsx"
-        props={{ speaking: v.speaking, subtitle: v.subtitle }}
-        width={width}
-        height={orbRows(v.subtitle, width)}
-      />
-    )
-  }
+function view(Client: ElementConstructor<ClientProps>, p: HorusPhase, columns = EYE_W + MARGIN + 2) {
   return (
     <Client
       key="eye"
@@ -199,12 +187,12 @@ export const registerEye = (on: On) => {
     on('session.start', { isInteractive }, async ($, e, next) => {
       const started = await next(e)
       for (const c of [
-        { name: 'voiceover', description: 'Read replies aloud with the Horus orb and subtitles', argumentHint: '[on|off|test]' },
+        { name: 'voiceover', description: 'Read replies aloud; the pulse above the prompt becomes a speech wave', argumentHint: '[on|off|test]' },
         { name: 'horus-eye', description: 'Say where the Horus eye is drawn and why it shows or hides' },
       ]) {
         await $.command.register(c).catch(() => undefined)
       }
-      // A session starts silent: an orb left over from a dropped run would never clear.
+      // A session starts silent: a speech wave left over from a dropped run would never clear.
       await update($, voice, v => ({ ...v, speaking: false, subtitle: '' }))
       lastReply = await lastAssistantText($)
       // A reload draws the transcript again before the reply is read back: draw its last block once more.
@@ -265,7 +253,7 @@ export const registerEye = (on: On) => {
     return next(e)
   })
 
-  // Any plugin's speech shows the orb with its text; our own sentences are already on screen.
+  // Any plugin's speech turns the pulse into the speech wave; our own sentences already did.
   on('audio.speak', async ($, e, next) => {
     const v = await read($, voice)
     if (v.speaking && v.subtitle === e.text) return next(e)
@@ -290,7 +278,7 @@ export const registerEye = (on: On) => {
     const { Box, Client } = $.ui.resolve(e)
     return (
       <Box width="100%" flexDirection="row" justifyContent="center">
-        {view(Client, what, p, v, e.viewport?.columns)}
+        {view(Client, p, e.viewport?.columns)}
       </Box>
     )
   }).catch(($, e, next) => next(e))
@@ -310,7 +298,7 @@ export const registerEye = (on: On) => {
       <Box flexDirection="column">
         {await next(e)}
         <Box flexDirection="row" justifyContent="center">
-          {view(Client, what, p, v, e.viewport?.columns)}
+          {view(Client, p, e.viewport?.columns)}
         </Box>
       </Box>
     )

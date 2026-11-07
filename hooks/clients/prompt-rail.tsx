@@ -1,6 +1,6 @@
 import type { ClientModule } from 'claude-code'
 
-import { aqua, aquaDim, gold, goldBright, goldDim, orbCore, purple, purpleDim } from '../theme'
+import { aqua, aquaDim, gold, goldBright, goldDim, orbCore, purple, purpleDim, violet } from '../theme'
 
 // The prompt rail: an ECG monitor trace hugging the input. A sweep cursor writes the heartbeat into a
 // ring buffer left to right; the trace behind it fades, a short gap runs ahead of it. Drawn as a thin
@@ -24,8 +24,14 @@ export const BURST: Pt[] = [[0, 0], [1, 0.5], [2, -0.4], [3, 1], [4, -1], [5, 0.
 export const STRONG: Pt[] = [[0, 0], [2, 0.5], [4, 0], [5, -0.5], [6, 1], [7, 1], [8, -1], [9, -1], [10, 0.4], [12, 0]]
 
 const WORKING = new Set(['thinking', 'tool', 'outputting'])
+/** Speech: a voice-print pink the trace turns while anything speaks. */
+export const SPEECH = '#f472b6'
 /** Dot columns from one beat to the next: a calm rate idle, faster while working. */
-export const beatPeriod = (mode: string) => ({ thinking: 30, tool: 26, outputting: 36 })[mode] ?? 64
+export const beatPeriod = (mode: string) => ({ thinking: 30, tool: 26, outputting: 36, speaking: 64 })[mode] ?? 64
+
+/** The speech wave at dot column `t`: a fast carrier under a slow, uneven envelope, so peaks and lows run high and deep. */
+export const voiceAmp = (t: number) =>
+  Math.sin(t * 1.3) * (0.25 + 0.75 * Math.abs(Math.sin(t * 0.09) * Math.sin(t * 0.031 + 1.2)))
 
 /** The shape's amplitude `d` dot columns into the beat; 0 (the flat baseline) outside it. */
 export function sample(shape: Pt[], d: number): number {
@@ -45,7 +51,7 @@ export function step(tr: Trace, mode: string, dots: number): Trace {
   const period = beatPeriod(mode)
   for (let i = 0; i < dots; i++) {
     const shape = strong ? STRONG : WORKING.has(mode) && n % 3 === 2 ? BURST : NORMAL
-    a[x] = sample(shape, ph)
+    a[x] = mode === 'speaking' && !strong ? voiceAmp(n * period + ph) : sample(shape, ph)
     // Only the strong beat's own dots flash, not the flat run after it.
     k[x] = strong && ph <= (STRONG[STRONG.length - 1]?.[0] ?? 0) ? 1 : 0
     x = (x + 1) % a.length
@@ -110,8 +116,9 @@ export function railCells(tr: Trace, mode: string, cols: number, rows = 1): [str
     const strong = pair.some(i => tr.k[i] === 1)
     const f = age / w
     let color: string
-    if (age < 2) color = working ? orbCore : goldBright
+    if (age < 2) color = mode === 'speaking' ? orbCore : working ? orbCore : goldBright
     else if (strong) color = mix(goldBright, gold, f)
+    else if (mode === 'speaking') color = peak > 0.15 ? mix(mix(violet, SPEECH, peak), purple, f) : mix(violet, purpleDim, f)
     else if (working) color = peak > 0.15 ? mix(aqua, purple, f) : mix(aquaDim, purpleDim, f)
     else color = peak > 0.15 ? mix(mix(gold, goldBright, peak), goldDim, f) : goldDim
     for (let r = 0; r < rows; r++) {

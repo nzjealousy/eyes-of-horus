@@ -138,17 +138,19 @@ export function sparkle(grid: Seg[][], list: readonly Sparkle[], t: number) {
 export type Pose = { ox: number; oy: number; open: number; t: number }
 
 const A = 15 // the almond's half-width
-// The drawn eye's extent in eye units, brow to lower lid and tail to tail, and the middle of it.
-const EXT_W = 2 * (A + 4)
-const EXT_H = 21
-const MID_Y = -2.6
+// The Wedjat's extent in eye units: brow top to the spiral's foot, the inner corner to the cosmetic tail's end
+// (asymmetric, so its middle sits right of the pupil), and that middle.
+const EXT_W = 41
+const EXT_H = 32
+const MID_X = 4.25
+const MID_Y = 3
 /** How much of the frame the eye fills, on its tighter axis. */
-const FILL = 0.9
+const FILL = 0.94
 
 /** Eye units of a cell centre: x in columns, y in half-rows (a cell is about twice as tall as wide), scaled so the eye fills FILL of the frame. */
 function units(x: number, y: number, w: number, h: number): [number, number] {
   const k = FILL * Math.min(w / EXT_W, (2 * h) / EXT_H)
-  return [(x + 0.5 - w / 2) / k, ((y + 0.5 - h / 2) * 2) / k + MID_Y]
+  return [(x + 0.5 - w / 2) / k + MID_X, ((y + 0.5 - h / 2) * 2) / k + MID_Y]
 }
 /** Upper and lower lid heights at `px`: open, they part; at 0 they meet in one line just below the middle. */
 export function lids(px: number, open: number): [number, number] {
@@ -156,16 +158,52 @@ export function lids(px: number, open: number): [number, number] {
   return [f * (1.5 - 9.5 * open), f * (1.5 + 4.5 * open)]
 }
 
+// The Wedjat's markings under the eye, as polylines: the teardrop falling straight from under the pupil, and the
+// spiral sweeping down from under the eye's middle, out to the right and curling inward.
+type Pt = readonly [number, number]
+const TEAR: Pt[] = [[-2, 6.2], [-3.5, 11.5], [-5, 16.8]]
+const SPIRAL: Pt[] = (() => {
+  const c: Pt = [13, 12.5]
+  const pts: Pt[] = [[1.5, 6.4], [4.5, 9.8]]
+  for (let i = 0; i <= 48; i++) {
+    const th = Math.PI - (i / 48) * 2 * Math.PI // left, down, right, up, back left
+    const r = 6 - 3.6 * (i / 48)
+    pts.push([c[0] + r * Math.cos(th), c[1] + r * Math.sin(th)])
+  }
+  return pts
+})()
+/** Distance from a point to a polyline. */
+export function distTo(line: readonly Pt[], px: number, py: number): number {
+  let best = Infinity
+  for (let i = 1; i < line.length; i++) {
+    const [ax, ay] = line[i - 1]!
+    const [bx, by] = line[i]!
+    const dx = bx - ax
+    const dy = by - ay
+    const t = clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1), 0, 1)
+    best = Math.min(best, Math.hypot(px - ax - t * dx, py - ay - t * dy))
+  }
+  return best
+}
+
 /** Luminance and colour of one point of the eye, in eye units. */
 export function eyeCell(px: number, py: number, p: Pose): [number, string] {
   const [yU, yL] = lids(px, p.open)
   const isInside = Math.abs(px) < A && py > yU && py < yL
   // The kohl line on the upper lid, its tail past the outer corner, the lower lid and the brow.
-  if (Math.abs(px) < A + 0.5 && Math.abs(py - yU) < 1.1) return [0.62 - 0.12 * Math.abs(py - yU), violet]
-  if (px >= A && px < A + 4 && Math.abs(py - 0.35 * (px - A)) < 1.1) return [0.55 - 0.05 * (px - A), purple]
-  if (Math.abs(px) < A && Math.abs(py - yL) < 0.8) return [0.38, purple]
-  const yB = -11.5 + 2 * (px / A) ** 2
-  if (Math.abs(px) < A && Math.abs(py - yB) < 1.2) return [0.5 - 0.25 * (px / A) ** 2, purple]
+  if (Math.abs(px) < A + 0.5 && Math.abs(py - yU) < 1.3) return [0.68 - 0.12 * Math.abs(py - yU), violet]
+  // The cosmetic line: straight on from the outer corner, far to the right.
+  if (px >= A && px < A + 9.5 && Math.abs(py - (0.4 + 0.06 * (px - A))) < 1.1) return [0.62 - 0.02 * (px - A), violet]
+  if (Math.abs(px) < A && Math.abs(py - yL) < 0.8) return [0.4, purple]
+  // The brow: a thick arc over the eye, thinning as it runs on past the outer corner.
+  const yB = -12 + 2 * (px / A) ** 2
+  if (px > -A - 0.5 && px < A + 8.5 && Math.abs(py - yB) < 2 - 0.025 * (px + A)) return [0.66 - 0.12 * Math.abs(py - yB), violet]
+  if (py > 5) {
+    const tear = distTo(TEAR, px, py)
+    if (tear < 1.1) return [0.64 - 0.15 * tear, violet]
+    const curl = distTo(SPIRAL, px, py)
+    if (curl < 1.1) return [0.64 - 0.15 * curl, violet]
+  }
   if (!isInside) {
     // Inside the eye's outline but not the opening: lid skin, sparse purple, darkest at the outline.
     const e = Math.hypot(px / (A + 1), py / (py < 0 ? 11 : 7.5)) - 1

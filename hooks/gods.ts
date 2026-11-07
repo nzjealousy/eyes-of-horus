@@ -248,6 +248,49 @@ const SET: God = {
   ],
 }
 
+// --- Slaves: every non-god agent type is an Egyptian worker in a khat headcloth, a leather strap for the gold
+// collar, and the tool of its trade. The headcloth colour is the type's own (hashed), the tool comes from its name.
+const SLAVE_CLOTH = ['#c9b27c', '#2dd4bf', '#b794f6', '#f0a24b', '#5fd68a', '#e5586b', '#7aa2f7', '#e2c48e']
+const SLAVE_HEAD: Part = ['bd', 4, [
+  '.........CCCC',
+  '........CCCCCC',
+  '.......CcCCCCCC',
+  '.......CCSSSSSS',
+  '.......CcSSSESS',
+  '.......CCSSSSSSS',
+  '.......CcSSSSSS',
+  '........CSSSSs',
+  '.........SSSS',
+]]
+const TOOLS: Record<string, Part> = {
+  hammer: ['pr', 10, [
+    '...................KKK',
+    '...................KKK',
+    ...Array<string>(8).fill('....................F'),
+  ]],
+  scroll: ['pr', 15, ['...................fff', '...................fFf', '...................fff', '...................fFf', '...................fff']],
+  basket: ['pr', 1, ['........FFFFFFF', '.......FfFfFfFF', '........FFFFFF']],
+  torch: ['gl', 7, ['....................Y', '...................YQY', '...................GYG', '....................G']],
+  brush: ['pr', 9, ['....................P', ...Array<string>(10).fill('....................F')]],
+}
+// Torch handle: the flame (`gl`) pulses on its own, the handle rides the body.
+const TORCH_HANDLE: Part = ['pr', 11, Array<string>(9).fill('....................F')]
+const toolOf = (type: string): string =>
+  /explore/i.test(type) ? 'torch' : /plan|manager|guide/i.test(type) ? 'scroll' : /organi[sz]/i.test(type) ? 'basket' : /design/i.test(type) ? 'brush' : 'hammer'
+const hash = (s: string) => [...s].reduce((h, ch) => (h * 31 + (ch.codePointAt(0) ?? 0)) >>> 0, 7)
+
+/** The worker sprite for a non-god agent type. */
+const slaveOf = (type: string): God => {
+  const cloth = SLAVE_CLOTH[hash(type) % SLAVE_CLOTH.length] ?? linen
+  const tool = toolOf(type)
+  return {
+    pal: { C: cloth, c: OBS, G: '#7a5a34', X: '#7a5a34' },
+    parts: [SLAVE_HEAD, ...(tool === 'torch' ? [TORCH_HANDLE] : []), TOOLS[tool] as Part],
+  }
+}
+/** The key `godSvg` draws a non-god agent type's worker by. */
+export const slaveKey = (type: string) => `slave:${type}`
+
 // Finished/planned gods keep their shapes and lose their colour: each fill becomes a cool grey of its luma.
 const greyOf = (hex: string): string => {
   const n = parseInt(hex.slice(1), 16)
@@ -291,6 +334,12 @@ const WALK_CSS = `<style>
 @keyframes eoh-god-step{0%{opacity:1}50%{opacity:0}}@keyframes eoh-god-bob{50%{transform:translateY(-1px)}}@keyframes eoh-god-glow{50%{opacity:.45}}
 @media (prefers-reduced-motion:reduce){.eoh-walk *{animation:none!important}}
 </style>`
+// Waiting: the body breathes (a 1 px rise every 2 s), the prop sways with it, glints pulse slowly.
+const IDLE_CSS = `<style>
+.eoh-idle .eoh-god-bd,.eoh-idle .eoh-god-pr{animation:eoh-god-breathe 2s steps(1) infinite}.eoh-idle .eoh-god-gl{animation:eoh-god-glow 2s ease-in-out infinite}
+@keyframes eoh-god-breathe{50%{transform:translateY(-1px)}}@keyframes eoh-god-glow{50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.eoh-idle *{animation:none!important}}
+</style>`
 
 const num = (v: number, fallback: number): number => (Number.isFinite(v) ? Math.round(v * 1000) / 1000 : fallback)
 
@@ -299,8 +348,8 @@ const num = (v: number, fallback: number): number => (Number.isFinite(v) ? Math.
  * (x, y) and each unit `scale` px, so it covers x .. x + GOD_W * scale and y .. y + GOD_H * scale. `isWalking` adds the
  * second leg pose and the scoped animation; `isDim` greys every fill (finished/planned). Unknown tiers draw Set.
  */
-export const godSvg = (tier: string, x: number, y: number, scale: number, isWalking: boolean, isDim = false): string => {
-  const god = Object.hasOwn(GODS, tier) ? (GODS[tier] as God) : SET
+export const godSvg = (tier: string, x: number, y: number, scale: number, isWalking: boolean, isDim = false, isIdle = false): string => {
+  const god = Object.hasOwn(GODS, tier) ? (GODS[tier] as God) : tier.startsWith('slave:') ? slaveOf(tier.slice(6)) : SET
   const pal = { ...PAL, ...god.pal }
   const groups = new Map<string, Map<number, string>>()
   const parts = [isWalking ? LEGS_PASS : null, LEGS_STRIDE, TORSO, ...god.parts]
@@ -323,5 +372,6 @@ export const godSvg = (tier: string, x: number, y: number, scale: number, isWalk
   }
   const legs = group('la') + (isWalking ? group('lb', '', ' opacity="0"') : '')
   const body = group('bd', group('pr') + group('gl'))
-  return `<g transform="translate(${num(x, 0)},${num(y, 0)}) scale(${num(scale, 1)})" shape-rendering="crispEdges">${isWalking ? WALK_CSS : ''}<g class="eoh-god${isWalking ? ' eoh-walk' : ''}">${legs}${body}</g></g>`
+  const motion = isWalking ? ' eoh-walk' : isIdle ? ' eoh-idle' : ''
+  return `<g transform="translate(${num(x, 0)},${num(y, 0)}) scale(${num(scale, 1)})" shape-rendering="crispEdges">${isWalking ? WALK_CSS : isIdle ? IDLE_CSS : ''}<g class="eoh-god${motion}">${legs}${body}</g></g>`
 }

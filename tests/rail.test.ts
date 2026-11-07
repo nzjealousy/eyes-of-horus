@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { BURST, NORMAL, STRONG, beatPeriod, braille, dotY, initTrace, kick, railCells, sample, step } from '../hooks/clients/prompt-rail'
+import { BURST, NORMAL, SPEECH, STRONG, beatPeriod, braille, dotY, initTrace, kick, railCells, sample, step, voiceAmp } from '../hooks/clients/prompt-rail'
 import { aqua, gold, goldBright, goldDim, orbCore } from '../hooks/theme'
 
 test('trace sampling: flat baseline between bursts, spikes within -1..1', () => {
@@ -78,4 +78,18 @@ test('colours: gold idle, aqua working, a strong gold beat after a turn', () => 
   const after = step(kick(initTrace('tool', 180)), 'idle', 30)
   expect(after.k.filter(v => v === 1).length).toBe((STRONG[STRONG.length - 1]?.[0] ?? 0) + 1)
   expect(railCells(after, 'idle', 90).flat().some(([, c]) => c === gold || c === goldBright)).toBe(true)
+})
+
+test('speech turns the trace into a tall, uneven wave in its own colour', () => {
+  const amps = Array.from({ length: 400 }, (_, t) => voiceAmp(t))
+  expect(Math.max(...amps)).toBeGreaterThan(0.8)
+  expect(Math.min(...amps)).toBeLessThan(-0.8)
+  for (const a of amps) expect(Math.abs(a)).toBeLessThan(1.001)
+  const tr = step(initTrace('speaking', 160), 'speaking', 160)
+  // Far more of the trace is off the baseline than an idle heartbeat's.
+  const busy = (t: { a: number[] }) => t.a.filter(v => Math.abs(v) > 0.15).length
+  expect(busy(tr)).toBeGreaterThan(3 * busy(initTrace('idle', 160)))
+  const colours = railCells(tr, 'speaking', 80, 2).flat().map(([, c]) => c)
+  expect(colours.some(c => c !== gold && c !== goldDim && c !== aqua)).toBe(true)
+  expect(SPEECH).toMatch(/^#[0-9a-f]{6}$/)
 })

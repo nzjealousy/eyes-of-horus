@@ -40,10 +40,19 @@ export const paneCollapsed = atom(
   { shape: 'pane-collapsed-1' },
 )
 
+/** Hall of Truth entries scrolled back from the newest; 0 follows the newest. Written by the pane. */
+export const railOffset = atom({ plugin: 'eyes-of-horus', key: 'railOffset' } as const, 0)
+
 export const LOG_CAP = 200
 const SHELLS = ['Bash', 'PowerShell']
 const LEVELS: readonly HorusPonytailLevel[] = ['off', 'lite', 'full', 'ultra']
 const PROGRESS_TOOL = 'mcp__savvy-progress__progress'
+const STEP_TOOL = 'mcp__savvy-progress__step'
+// Prepended to every subagent prompt so agents read and answer tersely (the caveman skill's rules, inline:
+// a subagent may not have the Skill tool).
+export const CAVEMAN =
+  'Caveman mode: terse. Answer first, no filler, no pleasantries, no restating the task. ' +
+  'Keep every technical fact; code, paths, commands, numbers and errors exact. Final report: shortest form that is complete.\n\n'
 const BLANK: HorusProgress = { title: '', total: 0, done: 0, phase: '', finished: false, tasks: [] }
 
 type $ = EngineInterface
@@ -160,7 +169,10 @@ export const registerCore = (on: On) => {
     const started = await next(e)
     await refreshPonytail($)
     const u = await $.session.usage().catch(() => undefined)
-    if (u) await saveContext($, u.context, u.cost)
+    if (u) {
+      await saveContext($, u.context, u.cost)
+      await update($, usage, x => ({ ...x, startedAt: u.startedAt }))
+    }
     return started
   })
 
@@ -195,7 +207,8 @@ export const registerCore = (on: On) => {
   })
 
   on('agent.spawn', async ($, e, next) => {
-    const spawned = await next(e)
+    const prompt = e.prompt.startsWith(CAVEMAN) ? e.prompt : CAVEMAN + e.prompt
+    const spawned = await next({ ...e, prompt })
     if (spawned.agentId !== undefined) await addAgent($, spawned.agentId, e.subagentType, e.description)
     return spawned
   })
@@ -203,7 +216,21 @@ export const registerCore = (on: On) => {
   // Every hook hears each response row (an answer without `next` cannot refuse one), so this sees savvy-progress calls
   // whichever plugin sits outermost on tool.call. Rows land per finished block, not per streamed token.
   on('session.append', { door: 'response' }, async ($, e, next) => {
-    if (e.agentId === undefined) {
+    const agentId = e.agentId
+    if (agentId !== undefined) {
+      // A worker's own savvy-progress `step` call: its card's progress bar.
+      for (const b of e.message.content) {
+        if (b.type !== 'tool_use' || b.name !== STEP_TOOL || typeof b.input !== 'object' || b.input === null) continue
+        const input = b.input as Record<string, unknown>
+        await saveAgents($, list =>
+          list.map(a => {
+            if (a.id !== agentId) return a
+            const prev = a.steps ?? { done: 0, total: 0, note: '' }
+            return { ...a, steps: { done: num(input.done) ?? prev.done, total: num(input.total) ?? prev.total, note: str(input.note) ?? prev.note } }
+          }),
+        )
+      }
+    } else {
       const blocks = e.message.content
       if (blocks.some(b => b.type === 'text' && str(b.text)?.trim())) await setPhase($, 'outputting', from => from !== 'idle')
       for (const b of blocks) {

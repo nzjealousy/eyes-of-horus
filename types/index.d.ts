@@ -10,6 +10,8 @@ export type HorusAgent = {
   startedAt: number
   endedAt?: number
   tokens?: number
+  /** The agent's own savvy-progress `step` report, when it sends one. */
+  steps?: { done: number; total: number; note: string }
 }
 
 export type HorusTaskStatus = 'pending' | HorusAgentStatus
@@ -43,6 +45,8 @@ export type HorusUsage = {
   costUsd: number
   agentTimeMs: number
   turns: number
+  /** When the session started (`$.session.usage().startedAt`); absent in values stored before it existed. */
+  startedAt?: number
 }
 
 export type HorusVoice = {
@@ -84,6 +88,8 @@ declare module 'claude-code' {
       inflight: Shaped<HorusInflight[]>
       /** Written by the pane only: which of its sections are folded. */
       paneCollapsed: Shaped<{ session: boolean; agents: boolean }>
+      /** Written by the pane only: Hall of Truth entries scrolled back from the newest (0 = follow). */
+      railOffset: number
     }
   }
 }

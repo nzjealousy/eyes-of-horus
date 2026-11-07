@@ -2,6 +2,7 @@ import type { Atom, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
+  CAVEMAN,
   agents,
   phase,
   ponytail,
@@ -52,12 +53,18 @@ function engine(on: On, flag: string | null = 'lite\n') {
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('agent.list', () => ({ value: [] }))
-  on('agent.spawn', () => ({ model: 'm', agentId: 'a1' }))
+  on('agent.spawn', (_, e) => {
+    spawnedPrompts.push(e.prompt)
+    return { model: 'm', agentId: 'a1' }
+  })
   return { clock, inTool, peek }
 }
 
 // The typed tool-call union is too deep for tsc (TS2589); the call itself is plain.
 const callTool = ($: { tool: { call: unknown } }, input: object) => (($.tool.call as (i: object) => Promise<unknown>)(input))
+
+// What the engine beneath was asked to spawn with: the mod prefixes every prompt with the caveman rules.
+const spawnedPrompts: string[] = []
 
 const USAGE = { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 80, cache_creation_input_tokens: 5, model: 'm' }
 
@@ -171,6 +178,7 @@ test('savvy-progress calls are captured, merged and joined with agents', async (
     background: true,
     fork: false,
   })
+  expect(spawnedPrompts.at(-1)).toBe(CAVEMAN + 'do it')
   let s = peek()
   expect(s.agents.map(a => `${a.id}/${a.title}/${a.status}`)).toEqual(['a1/Mod core/running'])
   expect(s.progress?.tasks[0]?.status).toBe('running')

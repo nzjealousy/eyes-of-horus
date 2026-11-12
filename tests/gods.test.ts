@@ -13,7 +13,7 @@ const checkSvg = (svg: string, W = GOD_W, H = GOD_H): void => {
   expect(svg).not.toMatch(/NaN|Infinity|undefined|null/)
   for (const [, key, value] of svg.matchAll(/ ([a-z-]+)="([^"]*)"/g)) {
     if (key === 'fill') expect(value).toMatch(/^#[0-9a-f]{6}$/)
-    else if (key === 'class' || key === 'shape-rendering') expect(value).toMatch(/^[a-zA-Z -]+$/)
+    else if (key === 'class' || key === 'shape-rendering') expect(value).toMatch(/^[a-zA-Z0-9 -]+$/)
     else if (key === 'd') expect(value).toMatch(/^(M\d+ \d+h\d+v\d+h-\d+z)+$/)
     else for (const n of value?.match(/-?[\d.]+/g) ?? []) expect(Number.isFinite(Number(n))).toBe(true)
   }
@@ -100,7 +100,7 @@ const scopeOf = (svg: string) => /class="eoh-pose ([\w-]+)"/.exec(svg)?.[1] ?? '
 // right there, reduced motion stops it, and every group drawn hidden has a rule that shows it.
 const checkPoseCss = (svg: string): void => {
   const scope = scopeOf(svg)
-  expect(scope).toMatch(/^eoh-(wk-[a-z]+|done)$/)
+  expect(scope).toMatch(/^eoh-(wk-[a-z]+|done)(-s\d+)?$/)
   const css = /<style>([\s\S]*)<\/style>/.exec(svg)?.[1] ?? ''
   const rules = css.replace(/@keyframes [\w-]+\{([^{}]*\{[^}]*\})*\}/g, '')
   for (const [cls] of rules.matchAll(/\.[a-z][\w-]*/g)) expect(cls === `.${scope}` || cls.startsWith('.eoh-p-')).toBe(true)
@@ -157,4 +157,68 @@ test('unknown keys pose safely: tiers as Set, any worker type as a trade', async
     checkSvg(svg, POSE_W, POSE_H)
     expect(scopeOf(svg)).toBe('eoh-wk-hammer')
   }
+})
+
+// --- seeds. The negative delays a fragment's CSS starts its loops at.
+const delaysOf = (svg: string): string[] => (/<style>([\s\S]*)<\/style>/.exec(svg)?.[1] ?? '').match(/-[\d.]+s\b/g) ?? []
+const POSES = ['work', 'done', 'idle'] as const
+
+test('a seed starts a pose at its own phase under its own scope; seed 0 is the unseeded fragment', async () => {
+  for (const key of POSE_KEYS)
+    for (const pose of POSES) {
+      const plain = poseSvg(key, 3, 4, 3, pose)
+      for (const none of [0, -0, 0.2, 1000, NaN, Infinity]) expect(poseSvg(key, 3, 4, 3, pose, none)).toBe(plain)
+      const a = poseSvg(key, 3, 4, 3, pose, 5)
+      const b = poseSvg(key, 3, 4, 3, pose, 6)
+      expect(a).not.toBe(plain)
+      expect(a).not.toBe(b)
+      expect(poseSvg(key, 3, 4, 3, pose, 5)).toBe(a) // deterministic
+      expect(poseSvg(key, 3, 4, 3, pose, -5)).toBe(a) // folded to 0..999
+      expect(poseSvg(key, 3, 4, 3, pose, 1005)).toBe(a)
+      expect(delaysOf(a).length).toBeGreaterThan(0)
+      expect(delaysOf(a)).not.toEqual(delaysOf(b))
+      for (const svg of [a, b, poseSvg(key, 3, 4, 3, pose, 999)]) {
+        checkSvg(svg, POSE_W, POSE_H)
+        expect(svg.length).toBeLessThan(5120)
+        expect(svg).toMatch(/@media \(prefers-reduced-motion:reduce\)\{\.eoh-[\w-]+-s\d+ \*\{animation:none!important\}\}/)
+      }
+      if (pose === 'idle') continue
+      // Work and done: the same drawing, only the scope and the delays differ.
+      checkPoseCss(a)
+      expect(scopeOf(a)).toBe(`${scopeOf(plain)}-s5`)
+      expect(shapes(a)).toEqual(shapes(plain))
+    }
+})
+
+test('a seeded idle god breathes out of step and blinks on a long period of its own', async () => {
+  for (const key of POSE_KEYS) {
+    const plain = poseSvg(key, 0, 0, 2, 'idle')
+    const a = poseSvg(key, 0, 0, 2, 'idle', 5)
+    const b = poseSvg(key, 0, 0, 2, 'idle', 6)
+    expect(a).toBe(godSvg(key, 16, 16, 2, false, false, true, 5))
+    expect(plain).not.toContain('eoh-god-bk')
+    expect(a).toContain('class="eoh-god eoh-idle-s5"')
+    // The lid is one extra group, drawn hidden; everything else is the unseeded drawing.
+    expect(a).toContain('<g class="eoh-god-bk" opacity="0">')
+    expect(shapes(a).slice(0, -1)).toEqual(shapes(plain))
+    const css = /<style>([\s\S]*)<\/style>/.exec(a)?.[1] ?? ''
+    for (const [cls] of css.replace(/@keyframes [\w-]+/g, '').matchAll(/\.[a-z][\w-]*/g)) expect(cls === '.eoh-idle-s5' || cls.startsWith('.eoh-god-')).toBe(true)
+    for (const [, name] of css.matchAll(/@keyframes ([\w-]+)/g)) expect(name?.startsWith('eoh-')).toBe(true)
+    expect(css).toContain('.eoh-idle-s5 .eoh-god-bk{animation:eoh-idle-s5-k 4s steps(1) ')
+    expect(css).toContain('@keyframes eoh-idle-s5-k{')
+    expect(b).toContain('.eoh-idle-s6 .eoh-god-bk{animation:eoh-idle-s6-k 5s steps(1) ')
+    for (const n of [1, 2, 3, 4, 997]) expect(Number(/-k (\d+)s/.exec(poseSvg(key, 0, 0, 2, 'idle', n))?.[1])).toBeGreaterThanOrEqual(4)
+  }
+  // Only an idle god takes a seed.
+  expect(godSvg('fable', 0, 0, 1, true, false, false, 5)).toBe(godSvg('fable', 0, 0, 1, true))
+  expect(godSvg('fable', 0, 0, 1, false, false, false, 5)).toBe(godSvg('fable', 0, 0, 1, false))
+  expect(godSvg('fable', 0, 0, 1, false, true, true, 5)).toContain('eoh-idle-s5')
+})
+
+test('seeded unknown keys still fall back safely', async () => {
+  for (const pose of POSES) {
+    for (const key of ['', 'explore', 'constructor', '__proto__', 'toString']) expect(poseSvg(key, 0, 0, 1, pose, 7)).toBe(poseSvg('nope', 0, 0, 1, pose, 7))
+    for (const type of ['', 'constructor', '__proto__']) checkSvg(poseSvg(slaveKey(type), 0, 0, 1, pose, 7), POSE_W, POSE_H)
+  }
+  expect(scopeOf(poseSvg(slaveKey('__proto__'), 0, 0, 1, 'work', 7))).toBe('eoh-wk-hammer-s7')
 })

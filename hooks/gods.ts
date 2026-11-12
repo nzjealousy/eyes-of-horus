@@ -92,10 +92,13 @@ const FALCON: Part = ['bd', 5, [
   '.......HHHSS',
 ]]
 
+// `lid` covers the eye in the face's own colour: a seeded idle god blinks with it.
 interface God {
   pal: Record<string, string>
   parts: Part[]
+  lid: Part
 }
+const FALCON_LID: Part = ['bk', 8, ['FF', 'FF'], 11]
 
 // Ra's sun disc and its uraeus, and Bastet's sistrum: the work poses move them on their own.
 const RA_DISC: Part = ['bd', 0, [
@@ -119,6 +122,7 @@ const GODS: Record<string, God> = {
   fable: {
     pal: { F: OBS, f: gold, M: OBS, E: goldBright, B: linen },
     parts: [RA_DISC, FALCON, RA_URAEUS, WAS, ANKH],
+    lid: FALCON_LID,
   },
   // Anubis: slender obsidian jackal, tall ears lined in gold, long snout, gold eye, wig striped gold.
   heavy: {
@@ -144,6 +148,7 @@ const GODS: Record<string, God> = {
       WAS,
       ANKH,
     ],
+    lid: ['bk', 6, ['K'], 11],
   },
   // Horus: brown falcon with the aqua eye marking under the pschent (white hedjet rising from a purple deshret).
   careful: {
@@ -162,6 +167,7 @@ const GODS: Record<string, God> = {
       WAS,
       ANKH,
     ],
+    lid: FALCON_LID,
   },
   // Thoth: obsidian ibis with a long curved beak, an aqua crescent moon cradling a pale disc.
   medium: {
@@ -188,6 +194,7 @@ const GODS: Record<string, God> = {
       WAS,
       ANKH,
     ],
+    lid: ['bk', 7, ['K'], 12],
   },
   // Bastet: sand cat with pointed ears, gold earring, aqua eyes and an aqua sheath dress; slim, holds a sistrum.
   light: {
@@ -217,6 +224,7 @@ const GODS: Record<string, God> = {
       ]],
       BASTET_SISTRUM,
     ],
+    lid: ['bk', 6, ['C'], 12],
   },
 }
 
@@ -241,6 +249,7 @@ const SET: God = {
     WAS,
     ANKH,
   ],
+  lid: ['bk', 6, ['V'], 12],
 }
 
 // --- Slaves: every non-god agent type is an Egyptian worker in a khat headcloth, a leather strap for the gold
@@ -281,6 +290,7 @@ const slaveOf = (type: string): God => {
   return {
     pal: { C: cloth, c: OBS, G: '#7a5a34', X: '#7a5a34' },
     parts: [SLAVE_HEAD, ...(tool === 'torch' ? [TORCH_HANDLE] : []), TOOLS[tool] as Part],
+    lid: ['bk', 8, ['S'], 12],
   }
 }
 /** The key `godSvg` draws a non-god agent type's worker by. */
@@ -360,25 +370,48 @@ const IDLE_CSS = `<style>
 
 const num = (v: number, fallback: number): number => (Number.isFinite(v) ? Math.round(v * 1000) / 1000 : fallback)
 
+// --- Seeds: a hall of agents drawn from the same strings moves in lockstep, so a caller may pass each agent a seed.
+// It is folded to 0..999; 0 (also the default and any non-finite seed) is the unseeded drawing, byte for byte.
+const seedOf = (seed: number): number => (Number.isFinite(seed) ? Math.abs(Math.round(seed)) % 1000 : 0)
+/** Where in a loop of `period` s seed `n` starts; golden-ratio steps spread neighbouring seeds far apart. */
+const phase = (n: number, period: number, step = 0.618034): number => num(((n * step) % 1) * period, 0)
+// Every animation in `css` starts `d` s into its loop, so the groups of one figure stay in step with each other.
+// It relies on each animation ending `<timing function> [delay] infinite`, as all of them here do.
+const shift = (css: string, d: number): string =>
+  css
+    .replace(/( -?[\d.]+s)? infinite/g, (_, t = '0') => ` ${num(parseFloat(t) - d, 0)}s infinite`)
+    .replace(/animation-delay:(-?[\d.]+)s/g, (_, t) => `animation-delay:${num(Number(t) - d, 0)}s`)
+// A seeded idle god breathes from its own phase under its own scope class, and every 4 to 8 s (by seed) it blinks:
+// the lid (drawn hidden, so reduced motion keeps the eye open) shows for 4% of that period.
+const idleCss = (n: number): string => {
+  if (!n) return IDLE_CSS
+  const scope = `eoh-idle-s${n}`
+  const every = 4 + (n % 5)
+  const blink = `.${scope} .eoh-god-bk{animation:${scope}-k ${every}s steps(1) ${-phase(n, every, 0.754878)}s infinite}@keyframes ${scope}-k{0%{opacity:1}4%{opacity:0}}`
+  return shift(IDLE_CSS, phase(n, 2)).replaceAll('eoh-idle', scope).replace('@media', `${blink}\n@media`)
+}
+
 /**
  * SVG fragment (no <svg> wrapper) for the tier's god. The god's box is GOD_W x GOD_H grid units, its top-left corner at
  * (x, y) and each unit `scale` px, so it covers x .. x + GOD_W * scale and y .. y + GOD_H * scale. `isWalking` adds the
  * second leg pose and the scoped animation; `isDim` greys every fill (finished/planned). Unknown tiers draw Set.
+ * A non-zero `seed` gives an idle god its own breathing phase and an occasional blink (see `idleCss`).
  */
 const godOf = (key: string): God =>
   Object.hasOwn(GODS, key) ? (GODS[key] as God) : key.startsWith('slave:') ? slaveOf(key.slice(6)) : SET
 
-export const godSvg = (tier: string, x: number, y: number, scale: number, isWalking: boolean, isDim = false, isIdle = false): string => {
+export const godSvg = (tier: string, x: number, y: number, scale: number, isWalking: boolean, isDim = false, isIdle = false, seed = 0): string => {
   const god = godOf(tier)
-  const groups = pixelsOf([isWalking ? LEGS_PASS : null, LEGS_STRIDE, TORSO, ...god.parts], { ...PAL, ...god.pal }, GOD_W, GOD_H)
+  const n = isIdle && !isWalking ? seedOf(seed) : 0
+  const groups = pixelsOf([isWalking ? LEGS_PASS : null, LEGS_STRIDE, TORSO, ...god.parts, n ? god.lid : null], { ...PAL, ...god.pal }, GOD_W, GOD_H)
   const group = (cls: string, inner = '', extra = ''): string => {
     const px = groups.get(cls)
     return px || inner ? `<g class="eoh-god-${cls}"${extra}>${px ? paths(px, isDim) : ''}${inner}</g>` : ''
   }
   const legs = group('la') + (isWalking ? group('lb', '', ' opacity="0"') : '')
-  const body = group('bd', group('pr') + group('gl'))
-  const motion = isWalking ? ' eoh-walk' : isIdle ? ' eoh-idle' : ''
-  return `<g transform="translate(${num(x, 0)},${num(y, 0)}) scale(${num(scale, 1)})" shape-rendering="crispEdges">${isWalking ? WALK_CSS : isIdle ? IDLE_CSS : ''}<g class="eoh-god${motion}">${legs}${body}</g></g>`
+  const body = group('bd', group('pr') + group('gl') + group('bk', '', ' opacity="0"'))
+  const motion = isWalking ? ' eoh-walk' : isIdle ? (n ? ` eoh-idle-s${n}` : ' eoh-idle') : ''
+  return `<g transform="translate(${num(x, 0)},${num(y, 0)}) scale(${num(scale, 1)})" shape-rendering="crispEdges">${isWalking ? WALK_CSS : isIdle ? idleCss(n) : ''}<g class="eoh-god${motion}">${legs}${body}</g></g>`
 }
 
 // --- Poses: the Temple view shows each agent at work in its own chamber, and celebrating once it is done. A pose box
@@ -498,41 +531,46 @@ const WORK: Record<string, Pose> = {
     hide: ['pb'],
     css: `$pa{animation:~t 1s steps(1) infinite}$pb{animation:~t 1s steps(1) -.5s infinite}$gl{animation:~g 1s ease-in-out infinite}${TOGGLE}@keyframes ~g{50%{opacity:.45}}`,
   },
-  // Horus keeps watch: the falcon head scans forward and back with a gleaming eye while the back wing beats.
+  // Horus keeps watch: the falcon head scans forward and back with a gleaming eye while the back wing slowly beats.
   careful: {
     scope: 'eoh-wk-horus',
     parts: [
       LEGS_STRIDE, TORSO, NO_BACK_ARM, ...(GODS.careful as God).parts.filter(p => !HELD.has(p)).map(p => regroup(p, 'hd')), WAS,
       ['ey', 8, ['............Q']],
-      // The back wing (from 8 columns left of the sprite): aqua coverts on the leading edge, cream feather tips on the
-      // trailing one. Raised and spread, then swept down (the same wing mirrored about the shoulder row).
-      ['wa', 7, [
-        '.ff',
-        'fFFAA',
-        'fFFFFAA',
-        '.fFFFFFAA',
-        '.ffFFFFFFAA',
-        '..ffFFFFFFFAA',
-        '...ffFFFFFFFA',
-        '....f.fFFFFFA',
-        '.........FFFF',
+      // The back wing (from 8 columns left of the sprite): an aqua wing arm from the shoulder with brown and cream
+      // flight feathers hanging under it in stripes, their tips ragged. Raised and spread, then lowered along the back.
+      ['wa', 8, [
+        'AA',
+        'AAAA',
+        'FfAAAA',
+        'FfFfAAAA',
+        'FfFfFfAAAA',
+        'F.FfFfFfAAAA',
+        '..FfFfFfFfAAA',
+        '..F.FfFfFfFFF',
+        '....FfFfFfFf',
+        '....F.FfFfF',
+        '......F.Ff',
+        '........F',
       ], -8],
       ['wb', 15, [
-        '.........FFFF',
-        '....f.fFFFFFA',
-        '...ffFFFFFFFA',
-        '..ffFFFFFFFAA',
-        '.ffFFFFFFAA',
-        '.fFFFFFAA',
-        'fFFFFAA',
-        'fFFAA',
-        '.ff',
+        '..........AAA',
+        '........AAAAF',
+        '......AAAAFfF',
+        '....AAAAFfFfF',
+        '..AAAAFfFfFfF',
+        '.AAAFfFfFfFf',
+        '.FfFfFfFfFfF',
+        '.FfFfFfFfF.F',
+        '.F.FfFfFf',
+        '...F.FfF',
+        '.....F',
       ], -8],
     ],
     hide: ['wb'],
     css:
       '$hd{animation:~s 1s steps(1) infinite}$ey{animation:~s 1s steps(1) infinite,~t .5s steps(1) infinite}' +
-      '$wa{animation:~t .5s steps(1) infinite}$wb{animation:~t .5s steps(1) -.25s infinite}' +
+      '$wa{animation:~t 1s steps(1) infinite}$wb{animation:~t 1s steps(1) -.5s infinite}' +
       `${TOGGLE}@keyframes ~s{25%{transform:translateX(1px)}50%{transform:none}75%{transform:translateX(-1px)}}`,
   },
   // Thoth writes: a papyrus hangs before him and unrolls a line at a time while his reed scratches and his head dips.
@@ -654,9 +692,10 @@ const TRADE_WORK: Record<string, Pose> = {
     scope: 'eoh-wk-torch',
     parts: [
       LEGS_STRIDE, TORSO, NO_FRONT_ARM, SLAVE_HEAD,
-      ['ta', 8, [
+      ['ta', 7, [
         '...................YQY',
-        '...................YQY',
+        '..................YYQYY',
+        '..................GYQYG',
         '...................GYG',
         '....................G',
         ...Array<string>(5).fill('....................F'),
@@ -664,17 +703,18 @@ const TRADE_WORK: Record<string, Pose> = {
         '.................SSSF',
         '...................SFS',
       ]],
-      ['xa', 7, ['....................Y']],
-      ['tb', 5, [
+      ['xa', 6, ['....................Y']],
+      ['tb', 4, [
         '.......................YQY',
-        '.......................YQY',
+        '......................YYQYY',
+        '......................GYQYG',
         '.......................GYG',
         '........................G',
         ...Array<string>(6).fill('........................F'),
         '.....................SSSFS',
         '..................SSSS..F',
       ]],
-      ['xb', 4, ['........................Y']],
+      ['xb', 3, ['........................Y']],
     ],
     hide: ['tb', 'xb'],
     css:
@@ -688,8 +728,8 @@ const TRADE_WORK: Record<string, Pose> = {
     parts: [
       LEGS_STRIDE, TORSO, NO_FRONT_ARM, SLAVE_HEAD,
       ['pn', 10, ['........................wwwwwwww', ...Array<string>(21).fill('........................wffffffw')]],
-      ['ba', 14, ['.....................SSFFP', '...................SS', '..................SS']],
-      ['bb', 17, ['................SSSS', '...................SSS', '.....................SSFFP']],
+      ['ba', 14, ['.....................SSGGP', '...................SS', '..................SS']],
+      ['bb', 17, ['................SSSS', '...................SSS', '.....................SSGGA']],
       ['ka', 14, ['..........................PPPP']],
       ['kb', 19, ['..........................AAAA']],
     ],
@@ -744,12 +784,17 @@ const workOf = (key: string): Pose =>
  * with its prop), 'done' (the celebration) or 'idle' (godSvg's breathing). The pose box is POSE_W x POSE_H grid units,
  * its top-left corner at (x, y) and each unit `scale` px; the sprite sits in it at (8, 8), feet on the bottom edge.
  * Unknown tiers draw Set; any worker type draws a trade (hammer by default).
+ * `seed` (optional, e.g. the agent's index or a hash of its id) keeps agents out of lockstep: a non-zero seed starts
+ * the pose's loop at its own phase under its own scope (`<scope>-s<n>`), and an idle god also blinks every 4 to 8 s.
+ * Seed 0, the default, is the unseeded fragment.
  */
-export const poseSvg = (key: string, x: number, y: number, scale: number, pose: PoseName): string => {
+export const poseSvg = (key: string, x: number, y: number, scale: number, pose: PoseName, seed = 0): string => {
   const [px, py, s] = [num(x, 0), num(y, 0), num(scale, 1)]
-  if (pose !== 'work' && pose !== 'done') return godSvg(key, px + OX * s, py + OY * s, s, false, false, true)
+  if (pose !== 'work' && pose !== 'done') return godSvg(key, px + OX * s, py + OY * s, s, false, false, true, seed)
   const god = godOf(key)
-  const p = pose === 'done' ? doneOf(god) : workOf(key)
+  const n = seedOf(seed)
+  const base = pose === 'done' ? doneOf(god) : workOf(key)
+  const p = n ? { ...base, scope: `${base.scope}-s${n}`, css: shift(base.css, phase(n, 1)) } : base
   const groups = pixelsOf(p.parts, { ...PAL, ...god.pal }, POSE_W, POSE_H, OX, OY)
   const body = [...groups].map(([cls, g]) => `<g class="eoh-p-${cls}"${p.hide?.includes(cls) ? ' opacity="0"' : ''}>${paths(g, false, POSE_W, POSE_H)}</g>`)
   return `<g transform="translate(${px},${py}) scale(${s})" shape-rendering="crispEdges">${style(p.scope, p.css)}<g class="eoh-pose ${p.scope}">${body.join('')}</g></g>`

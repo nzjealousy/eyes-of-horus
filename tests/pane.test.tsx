@@ -219,7 +219,7 @@ const PANE = {
 
 // The state beneath the plugin: seeded values (unwrapped); any other key (the pane's folds) is the kit's own store.
 function seed(on: On, values: Record<string, unknown>) {
-  const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-2', sessionLog: 'log-2', usage: 'usage-1' }
+  const shapes: Record<string, string> = { agents: 'agents-2', progress: 'progress-2', sessionLog: 'log-2', usage: 'usage-1' }
   on('state.get', (_, e, next) => {
     const shape = shapes[e.key]
     // An unshaped key (phase, phaseSince) is seeded raw when given; otherwise the kit's store answers.
@@ -719,4 +719,39 @@ test('Stop on running agent rows only: two presses call TaskStop with its id, to
     expect(toasts.at(-1)).toBe('The Field of Reeds (Aaru): cannot stop that agent (not a background task)')
     expect(await labels()).toEqual(['Stop turn', 'Stop', undefined])
   }
+})
+
+test('an agent row and its tools in the Hall of Truth open that agent in the Temple, as ↗ does; other rows stay plain', async ($, on) => {
+  seed(on, {
+    agents: [A('a1', 'Worker', 'running')],
+    sessionLog: [
+      { id: 'prompt:1:1', at: 1, kind: 'prompt', label: 'make it so', turn: 1 },
+      { id: 'agent:a1', at: 2, kind: 'agent', label: 'Worker', turn: 1, status: 'running', agentId: 'a1' },
+      { id: 'tu1', at: 3, kind: 'tool', label: 'Read · a.ts', turn: 1, status: 'done', endedAt: 4, agentId: 'a1' },
+      { id: 'tu2', at: 5, kind: 'tool', label: 'Grep · main', turn: 1, status: 'done', endedAt: 6 },
+    ],
+  })
+  const opened: string[] = []
+  const focused: unknown[] = []
+  on('ui.open', (_, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
+  on('state.set', (_, e, next) => {
+    if (e.key === 'chamber') focused.push(e.value)
+    return next(e)
+  })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const keys = (await ui.findAll({})).map(x => x.key).filter((k): k is string => k?.startsWith('hall-agent:') === true)
+    expect(keys.map(k => k.split(':').slice(2).join(':'))).toEqual(['agent:a1', 'tu1'])
+    // The Button holds the row's own label as its child text (no `label` prop), so the row reads as before.
+    expect((await ui.find({ key: keys[0]! }))?.text).toBe('Worker')
+    expect((await ui.find({ key: keys[1]! }))?.text).toBe('Read · a.ts')
+    expect(await ui.find({ type: 'Text', text: 'Grep · main' })).toBeDefined()
+    for (const k of keys) await ui.press({ key: k })
+    await ui.unmount()
+  }
+  expect(opened).toEqual(Array(4).fill('horus-temple'))
+  expect(focused).toEqual(['a1', 'a1', 'a1', 'a1'])
 })

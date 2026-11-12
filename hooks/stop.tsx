@@ -1,4 +1,4 @@
-// The two-click Stop Buttons, shared by the Gods pane (Hall of Truth) and the Temple.
+// The controls the Gods pane (Hall of Truth) and the Temple share: the two-click Stop Buttons and opening a chamber.
 import { atom, update } from 'claude-code'
 import type { ButtonProps, ElementConstructor, EngineInterface, TextProps } from 'claude-code'
 
@@ -8,6 +8,21 @@ import * as T from './theme'
 
 // Restated with its literal ref (validate's scan needs it in the file that updates it); the value lives in core.
 const armedStop = atom({ plugin: 'eyes-of-horus', key: 'armedStop' } as const, core.armedStop.initial)
+const chamber = atom({ plugin: 'eyes-of-horus', key: 'chamber' } as const, core.chamber.initial)
+
+/**
+ * A press that focuses `agentId`'s chamber and opens the Temple (temple.tsx draws it): a Gods card's ↗ and a Hall of
+ * Truth agent row. The press is the person's own, so the pane is placed at any width; a refused open is toasted.
+ */
+export function openChamber($: EngineInterface, agentId: string) {
+  return async () => {
+    await update($, chamber, () => agentId)
+    const r = await $.ui
+      .open({ id: 'horus-temple', title: 'The Temple' })
+      .catch((err: unknown) => ({ isPlaced: false as const, reason: err instanceof Error ? err.message : String(err) }))
+    if (!r.isPlaced) $.ui.toast(`The Temple is not shown (${r.reason})`)
+  }
+}
 
 // The disarm timer of the armed Stop Button; a press cancels it, so only the newest arming disarms.
 // shortcut: module state, lost on a hot reload (which cancels the timer too); the atom is the truth either way.

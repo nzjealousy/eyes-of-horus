@@ -7,7 +7,7 @@ import * as core from './core'
 import { GOD_H, GOD_TIERS, GOD_W, godGlyph, godName, godSvg, slaveKey } from './gods'
 import { barRuns, barSegments, FILTER_LABEL, HALL_FILTERS, hallLines, headLabel, newestTurn, nowLine, toggleTurn } from './hall'
 import type { BarSeg, HallHead, HallRow } from './hall'
-import { stopControls } from './stop'
+import { openChamber, stopControls } from './stop'
 import * as T from './theme'
 
 const PANE = 'horus'
@@ -28,7 +28,6 @@ const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const,
 const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, core.hallOpen.initial, { shape: core.hallOpen.shape! })
 const turnId = atom({ plugin: 'eyes-of-horus', key: 'turnId' } as const, core.turnId.initial)
 const armedStop = atom({ plugin: 'eyes-of-horus', key: 'armedStop' } as const, core.armedStop.initial)
-const chamber = atom({ plugin: 'eyes-of-horus', key: 'chamber' } as const, core.chamber.initial)
 
 export const PANE_TITLE = 'The Field of Reeds (Aaru)'
 export const GODS_LABEL = 'Gods'
@@ -634,15 +633,8 @@ export const registerPane = (on: On) => {
       </Button>
     )
 
-    // ↗ focuses the agent's chamber and opens the Temple (temple.tsx draws it; its Transcript Button opens the
-    // engine's transcript view). The press is the person's own, so the pane is placed at any width.
-    const open = (agentId: string) => async () => {
-      await update($, chamber, () => agentId)
-      const r = await $.ui
-        .open({ id: 'horus-temple', title: 'The Temple' })
-        .catch((err: unknown) => ({ isPlaced: false as const, reason: err instanceof Error ? err.message : String(err) }))
-      if (!r.isPlaced) $.ui.toast(`The Temple is not shown (${r.reason})`)
-    }
+    // ↗ (and a Hall of Truth agent row) focuses the agent's chamber and opens the Temple (stop.tsx openChamber).
+    const open = (agentId: string) => openChamber($, agentId)
     const agentsToggle = (
       <Button key="agents-toggle" plain dimColor onPress={() => fold('agents')}>
         {folded.agents ? 'Expand' : 'Collapse'}
@@ -975,7 +967,14 @@ export const registerPane = (on: On) => {
           {x.status === undefined ? null : <Text color={STATUS_COLOR[x.status]}>{status}</Text>}
           {tagText === '' ? null : <Text color={tagColor(x.agentId!)}>{tagText}</Text>}
           <Box flexGrow={1}>
-            <Text color={T.text}>{trunc(x.label, room)}</Text>
+            {/* An agent's row, or a subagent's tool, opens that agent's chamber, as a card's ↗ does (children, no `label`). */}
+            {x.agentId === undefined ? (
+              <Text color={T.text}>{trunc(x.label, room)}</Text>
+            ) : (
+              <Button key={`hall-agent:${i}:${x.id}`} plain onPress={open(x.agentId)}>
+                <Text color={T.text}>{trunc(x.label, room)}</Text>
+              </Button>
+            )}
           </Box>
           {r.dur === '' ? null : <Text dimColor>{r.dur}</Text>}
           {stopId === undefined ? null : <Box marginLeft={1}>{stopButton(`agent:${stopId}`, 'Stop', stopAgent(stopId))}</Box>}

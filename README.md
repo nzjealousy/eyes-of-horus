@@ -7,6 +7,11 @@ A Claude Code mod that restyles the desktop app and the terminal in gold and obs
 - **Gods pane:** a card for each savvy-flow agent, drawn as an Egyptian god by tier (Ra, Anubis, Horus, Thoth, Bastet), plus a foldable timeline of the session. The Running and Finished groups fold on their own. `/clear` empties the timeline, the cards, the progress bar and the cost, token, time and turn counts.
 - **The Temple:** a second pane, opened with `/temple` or the ↗ on a Gods card. Idle gods and workers stand together in a columned hall, and an agent that just finished celebrates there for a few seconds. Each working agent gets its own chamber: its animated figure, progress bar, running clock, token count and the last few things it did. The ↗ on a chamber (or on a Gods card) fills the pane with that one agent and its longer action list, with Back, Transcript (the full conversation) and a two-click Stop.
 - **Hall of Truth:** the session log in the Gods pane, grouped by turn. A Now line says what runs at the moment, filter chips show All, Main, Agents or Tools, and each turn header carries a small bar of its tools, agents and reply over time. A Stop turn button on the Now line and a Stop button on each running agent's row each need two clicks: the first turns the button into Sure?, the second stops it, and the button resets after 3 seconds.
+- **Agent rows open the Temple:** clicking an agent's row (or one of its tool rows) in the Hall of Truth opens that agent's chamber, as the ↗ on its card does.
+- **Finish toasts:** when an agent finishes or fails, a short in-app toast says so (`Horus: <task> finished` or `failed`).
+- **Agent reports:** a finished or failed agent's focus view shows the start of its final report under its title, cleaned of control characters and credentials.
+- **Figures out of step:** the hall's members and the chambers' figures each move in their own rhythm instead of all at once.
+- **Log after resume:** the Hall of Truth log (its newest 400 entries) is saved per session and comes back when you resume that session with `claude --resume`; `/reload-plugins` already kept it.
 
 ## Install
 

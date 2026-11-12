@@ -425,3 +425,107 @@ for (const flag of [null, 'review']) {
     expect(peek().ponytail.level).toBe('off')
   })
 }
+
+test('an agent ending toasts once (finished or failed) and keeps its report cleaned and redacted', async ($, on) => {
+  const { peek } = engine(on)
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  await $.turn.start({ text: 'wake', turnId: 'ta', agentId: 'a7' })
+  const hostile = `All done.\u001b[31m\nkey token=sk-live-123 and \u0007bell ${'x'.repeat(500)}`
+  await $.turn.complete({ answer: hostile, durationMs: 9, isAborted: false, turnId: 'ta', agentId: 'a7', reason: 'answer', usage: USAGE })
+  const report = peek().agents.find(a => a.id === 'a7')?.report ?? ''
+  expect(report.startsWith('All done. [31m key token=*** and bell x')).toBe(true)
+  expect(report).not.toContain('sk-live')
+  expect(/[\u0000-\u001f\u007f-\u009f]/.test(report)).toBe(false)
+  expect(report.length).toBe(400)
+  expect(report.endsWith('…')).toBe(true)
+  await $.turn.start({ text: 'wake', turnId: 'tb', agentId: 'b2' })
+  await $.turn.complete({ answer: '', durationMs: 9, isAborted: true, turnId: 'tb', agentId: 'b2', reason: 'aborted', usage: USAGE })
+  expect(peek().agents.find(a => a.id === 'b2')?.report).toBeUndefined()
+  expect(toasts).toEqual(['Horus: agent finished', 'Horus: agent failed'])
+  // A main turn's end toasts nothing; a woken agent loses its stale report.
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ answer: 'ok', durationMs: 9, isAborted: false, turnId: 't1', reason: 'answer', usage: USAGE })
+  await $.turn.start({ text: 'again', turnId: 'tc', agentId: 'a7' })
+  expect(toasts.length).toBe(2)
+  expect(peek().agents.find(a => a.id === 'a7')?.report).toBeUndefined()
+})
+
+test('a toast that throws does not block the agent turn.complete', async ($, on) => {
+  const { peek } = engine(on)
+  on('ui.toast', () => {
+    throw new Error('no toasts here')
+  })
+  await $.turn.start({ text: 'wake', turnId: 'ta', agentId: 'a7' })
+  const done = await $.turn.complete({ answer: 'fine', durationMs: 9, isAborted: false, turnId: 'ta', agentId: 'a7', reason: 'answer', usage: USAGE })
+  expect(done).toMatchObject({ text: 'fine' })
+  expect(peek().agents.find(a => a.id === 'a7')).toMatchObject({ status: 'done', report: 'fine' })
+})
+
+// $.store as the engine keeps it, in `db`, which the test reads (a test's own `$` has no store).
+function storeOf(on: On, db: Record<string, unknown>) {
+  on('store.get', (_, e) => ({ value: db[e.key] }))
+  on('store.set', (_, e) => {
+    db[e.key] = JSON.parse(JSON.stringify(e.value))
+    return { value: undefined }
+  })
+  on('store.delete', (_, e) => {
+    delete db[e.key]
+    return { value: undefined }
+  })
+}
+
+test('the log is stored per session at each main turn end and session end, the newest five sessions kept', async ($, on) => {
+  const { peek } = engine(on)
+  const db: Record<string, unknown> = { logs: ['old1', 'old2', 'old3', 'old4', 'old5'], 'log:old1': { shape: 'log-2', log: [] } }
+  storeOf(on, db)
+  on('session.id', () => ({ value: 's1' }))
+  on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.start({ text: 'wake', turnId: 'ta', agentId: 'a1' })
+  await $.turn.complete({ answer: 'ok', durationMs: 9, isAborted: false, turnId: 't1', reason: 'answer', usage: USAGE })
+  expect(db.logs).toEqual(['old2', 'old3', 'old4', 'old5', 's1'])
+  expect('log:old1' in db).toBe(false) // the oldest session's copy goes
+  const kept = db['log:s1'] as { shape: string; log: HorusLogEntry[] }
+  expect([kept.shape, kept.log.map(l => l.kind)]).toEqual(['log-2', ['prompt', 'agent', 'reply']])
+  // The agent ends after the turn: the session's end stores that too.
+  await $.turn.complete({ answer: 'done', durationMs: 9, isAborted: false, turnId: 'ta', agentId: 'a1', reason: 'answer', usage: USAGE })
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 's1', resume: { id: 's1' } })
+  expect((db['log:s1'] as { log: HorusLogEntry[] }).log.find(l => l.kind === 'agent')?.status).toBe('done')
+  expect(peek().sessionLog.length).toBe(3)
+})
+
+test('a resumed session in a new process gets its stored log back, its turn count, and nothing left running', async ($, on) => {
+  const { peek } = engine(on)
+  const log: HorusLogEntry[] = [
+    { id: 'prompt:4:1', at: 1, kind: 'prompt', label: 'go', turn: 4 },
+    { id: 'agent:a1', at: 2, kind: 'agent', label: 'Work', turn: 4, status: 'running', agentId: 'a1' },
+    { id: 'tu', at: 3, kind: 'tool', label: 'Read · a.ts', turn: 4, status: 'done', endedAt: 4 },
+  ]
+  storeOf(on, { 'log:s1': { shape: 'log-2', log } })
+  on('session.id', () => ({ value: 's1' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const s = peek()
+  expect(s.sessionLog.map(l => `${l.kind}:${l.status ?? '-'}`)).toEqual(['prompt:-', 'agent:failed', 'tool:done'])
+  expect(s.sessionLog[1]?.endedAt).toBe(2)
+  expect(s.turnSeq).toBe(4)
+  await $.turn.start({ text: 'next', turnId: 't5' })
+  expect(peek().sessionLog.at(-1)).toMatchObject({ kind: 'prompt', label: 'next', turn: 5 }) // a new turn group, not merged
+})
+
+test('a stored log of another shape is not restored; a session whose log is not empty reads nothing', async ($, on) => {
+  const { peek } = engine(on)
+  const entry: HorusLogEntry = { id: 'x', at: 1, kind: 'prompt', label: 'old', turn: 3 }
+  const db: Record<string, unknown> = { 'log:s1': { shape: 'log-1', log: [entry] } }
+  storeOf(on, db)
+  on('session.id', () => ({ value: 's1' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(peek().sessionLog).toEqual([])
+  db['log:s1'] = { shape: 'log-2', log: [entry] }
+  await $.turn.start({ text: 'now', turnId: 't1' })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(peek().sessionLog.map(l => l.label)).toEqual(['now'])
+})

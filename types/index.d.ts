@@ -12,6 +12,8 @@ export type HorusAgent = {
   tokens?: number
   /** The agent's own savvy-progress `step` report, when it sends one. */
   steps?: { done: number; total: number; note: string }
+  /** The agent's final answer, cleaned, redacted and cut to 400 characters; absent until it ends with one. */
+  report?: string
 }
 
 export type HorusTaskStatus = 'pending' | HorusAgentStatus
@@ -101,15 +103,15 @@ declare module 'claude-code' {
       inflight: Shaped<HorusInflight[]>
       /** Written by the pane only: which of its sections (and the Gods' Running and Finished groups) are folded. */
       paneCollapsed: Shaped<{ session: boolean; agents: boolean; running: boolean; finished: boolean }>
-      /** Written by the pane only: Hall of Truth entries scrolled back from the newest (0 = follow). */
+      /** Written by the pane (core resets it on /clear): Hall of Truth entries scrolled back from the newest (0 = follow). */
       railOffset: number
-      /** Written by the pane only: the Hall of Truth's filter chip. */
+      /** Written by the pane (core resets it on /clear): the Hall of Truth's filter chip. */
       hallFilter: HorusHallFilter
-      /** Written by the pane only: turns the user folded by hand; n >= 0 opened turn n, n < 0 closed turn -n-1. */
+      /** Written by the pane (core resets it on /clear): turns the user folded by hand; n >= 0 opened turn n, n < 0 closed turn -n-1. */
       hallOpen: Shaped<number[]>
-      /** Written by the pane only: the Stop Button awaiting its confirming press ('turn', `agent:<agentId>`), '' none. */
+      /** Written by the pane and the Temple (core resets it on /clear): the Stop Button awaiting its confirming press ('turn', `agent:<agentId>`), '' none. */
       armedStop: string
-      /** Written by the pane (a card's ↗) and the Temple: the agent id whose chamber the Temple focuses, '' for the overview. */
+      /** Written by the pane (a card's ↗ or a Hall of Truth agent row), the Temple, and core on /clear: the agent id whose chamber the Temple focuses, '' for the overview. */
       chamber: string
     }
   }

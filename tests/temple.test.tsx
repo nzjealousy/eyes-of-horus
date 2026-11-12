@@ -16,11 +16,14 @@ import {
   hallLayout,
   hallName,
   hallSvg,
+  idSeed,
+  REPORT_LINES,
   roomLayout,
   roomSvg,
   templeHeadSvg,
   termBar,
   wrapCells,
+  wrapLines,
 } from '../hooks/temple'
 
 const fits = (a: number, b: number) => expect(a).toBeLessThan(b + 0.001)
@@ -197,7 +200,7 @@ const SURFACES = ['terminal', 'desktop'] as const
 // the plugin writes it (`raw`, which a test may also set); any other key is the kit's own store. Returns the clock
 // and the chamber's writes too.
 function seed(on: On, values: Record<string, unknown>) {
-  const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-2', sessionLog: 'log-2', usage: 'usage-1' }
+  const shapes: Record<string, string> = { agents: 'agents-2', progress: 'progress-2', sessionLog: 'log-2', usage: 'usage-1' }
   const raw: Record<string, unknown> = { ...values }
   const focus: unknown[] = []
   let version = 1
@@ -487,6 +490,39 @@ test('focus on a finished agent: its done pose and time, no Stop; on the termina
   }
 })
 
+test('focus on an ended agent shows its report under the title, cleaned and escaped, wrapped and cut; a running one shows none', async ($, on) => {
+  // core.ts stores the report already cleaned and redacted (core.test.ts); here a stored one is drawn.
+  const report = `Done: <b>3 files</b> & tests token=*** ${'more words '.repeat(60)}`.trim()
+  const { raw } = seed(on, { ...WORK, agents: [...WORK.agents.slice(0, 1), { ...WORK.agents[1]!, report }], chamber: 'a2' })
+  for (const surface of SURFACES) {
+    raw.chamber = 'a2'
+    const ui = await $.ui.mount({ ...TEMPLE, surface })
+    if (surface === 'desktop') {
+      const room = (await alts(ui))[1]!
+      expect(room[1]).toContain('>Report<')
+      expect(room[1]).toContain('Done: &lt;b&gt;3 files&lt;/b&gt; &amp; tests token=***')
+      expect(room[1]).toContain('…')
+      expect(room[0]).toContain('; report: Done: <b>3 files</b>')
+    } else {
+      expect(await ui.find({ type: 'Text', text: 'Report' })).toBeDefined()
+      const lines = (await Promise.all(Array.from({ length: REPORT_LINES + 1 }, (_, i) => ui.find({ key: `report:a2:${i}` })))).map(
+        t => t?.text.replace(/^│ /, '').replace(/ *│$/, '') ?? '',
+      )
+      expect(lines.pop()).toBe('') // no fifth line
+      expect(lines.length).toBe(REPORT_LINES)
+      expect(lines[0]!.startsWith('Done: <b>3 files</b> &')).toBe(true)
+      expect(lines.at(-1)!.endsWith('…')).toBe(true)
+      for (const l of lines) fits([...l].length, 40 - 4)
+    }
+    await ui.unmount()
+    raw.chamber = 'a1' // running: no report block
+    const run = await $.ui.mount({ ...TEMPLE, surface })
+    if (surface === 'desktop') expect((await alts(run))[1]![1]).not.toContain('>Report<')
+    else expect(await run.find({ type: 'Text', text: 'Report' })).toBeUndefined()
+    await run.unmount()
+  }
+})
+
 test('a focus on an agent the session no longer lists says so, and Back clears it', async ($, on) => {
   const { focus, raw } = seed(on, { ...WORK, chamber: 'ghost' })
   for (const surface of SURFACES) {
@@ -588,4 +624,36 @@ test('session start registers /temple and does not open the Temple', async ($, o
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   expect(opened).toEqual(['horus'])
   expect(commands).toContain('temple')
+})
+
+test('seeds: an agent id gives one stable seed in 1..997, ids spread over many; the drawings carry them', async () => {
+  expect(idSeed('a1')).toBe(idSeed('a1'))
+  const ids = Array.from({ length: 200 }, (_, i) => `agent-${i}`)
+  const seeds = ids.map(idSeed)
+  for (const n of seeds) expect(n >= 1 && n <= 997 && Number.isInteger(n)).toBe(true)
+  expect(new Set(seeds).size).toBeGreaterThan(160) // 200 random draws of 997 average ~181 distinct
+  expect(new Set(['a1', 'a2', 'a3', 'a4'].map(idSeed)).size).toBe(4)
+  // A chamber's figure is phased by its id (so two chambers differ), the same on every redraw.
+  const one = roomSvg(320, ROOM, FEED).svg
+  expect(one).toBe(roomSvg(320, ROOM, FEED).svg)
+  expect(one).toContain(`-s${idSeed(ROOM.id)}`)
+  expect(roomSvg(320, { ...ROOM, id: 'other' }, FEED).svg).toContain(`-s${idSeed('other')}`)
+  // Hall members by their seed: idle ones breathe each in its own phase.
+  const hall = hallSvg(408, [1, 2, 3].map(seed => ({ key: 'medium', name: 'Thoth', color: '#fff', state: 'idle' as const, seed }))).svg
+  for (const n of [1, 2, 3]) expect(hall).toContain(`eoh-idle-s${n}`)
+})
+
+test('report lines: word-wrapped to the width, at most max lines, the last cut with an ellipsis', async () => {
+  const cells = (t: string) => [...t].length
+  const cut = (t: string, w: number) => (cells(t) <= w ? t : t.slice(0, w - 1) + '…')
+  expect(wrapLines('one two three', 20, 4, cells, cut)).toEqual(['one two three'])
+  expect(wrapLines('', 20, 4, cells, cut)).toEqual([])
+  const long = Array.from({ length: 60 }, (_, i) => `word${i}`).join(' ')
+  for (const w of [8, 12, 30]) {
+    const lines = wrapLines(long, w, 3, cells, cut)
+    expect(lines.length).toBe(3)
+    for (const l of lines) fits(cells(l), w)
+    expect(lines.at(-1)!.endsWith('…')).toBe(true)
+  }
+  expect(wrapLines('a ' + 'x'.repeat(40), 10, 4, cells, cut)).toEqual(['a', 'xxxxxxxxx…'])
 })

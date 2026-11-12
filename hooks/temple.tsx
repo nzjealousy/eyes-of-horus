@@ -69,11 +69,44 @@ export type Room = {
   ms: number
   tokens: number
   steps?: { done: number; total: number; note: string }
+  /** The agent's final answer (core.ts reportOf), shown once it has ended. */
+  report?: string
 }
 export type Feed = { items: FeedItem[]; older: number }
 
 const accentOf = (tier: string | undefined) => (tier === undefined ? SLAVE_COLOR : tierColorOf(tier))
 const cells = (s: string) => [...s].length
+
+/**
+ * A figure's animation seed from an agent id: stable across redraws (a changing seed restarts the animation) and
+ * spread over 1..997 so neighbouring chambers do not move in lockstep. FNV-1a, 32 bits.
+ */
+export const idSeed = (id: string) => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193) >>> 0
+  return (h % 997) + 1
+}
+
+/** `s` word-wrapped into at most `max` lines no wider than `w` by `width`; the last ends in '…' when text is left over. */
+export function wrapLines(s: string, w: number, max: number, width: (t: string) => number, cut: (t: string, w: number) => string): string[] {
+  const words = s.split(' ').filter(Boolean)
+  const lines: string[] = []
+  let i = 0
+  while (i < words.length && lines.length < max) {
+    let line = words[i++]!
+    while (i < words.length && width(`${line} ${words[i]}`) <= w) line += ` ${words[i++]}`
+    lines.push(width(line) > w ? cut(line, w) : line)
+  }
+  if (i < words.length && lines.length > 0) {
+    let last = lines.at(-1)!
+    while (last !== '' && width(last + '…') > w) last = last.slice(0, -1)
+    lines[lines.length - 1] = last.trimEnd() + '…'
+  }
+  return lines
+}
+/** Lines of an ended agent's report a focus view shows; none while it runs or without one. */
+export const REPORT_LINES = 4
+const reportText = (room: Room) => (room.status !== 'running' && room.report ? room.report : '')
 
 // --- desktop drawings. As in the Gods pane, every row is one Svg of known pixel height.
 
@@ -108,7 +141,8 @@ export const templeHeadSvg = (W: number, rest: string, gridY = 0) => {
 }
 
 // The hall: a frieze over two columns, and rows of figures, each row standing on its own stone floor.
-export type HallCell = { key: string; name: string; color: string; state: 'idle' | 'done' | 'failed' }
+/** `seed`: the figure's animation phase (0 none), so members do not breathe or celebrate in lockstep. */
+export type HallCell = { key: string; name: string; color: string; state: 'idle' | 'done' | 'failed'; seed?: number }
 export const HALL_SCALE = 1.25
 export const HALL_CELL = 64 // an idle member's cell
 export const HALL_WIDE = 128 // a finished agent's: its title needs the room
@@ -163,7 +197,7 @@ export function hallSvg(W: number, members: readonly HallCell[], gridY = 0) {
     const figure =
       m.state === 'failed'
         ? godSvg(m.key, bx + 8 * HALL_SCALE, c.y + 8 * HALL_SCALE, HALL_SCALE, false, true) + statusMark(r1(mid + 20), c.y + 14, 'failed')
-        : poseSvg(m.key, bx, c.y, HALL_SCALE, m.state === 'done' ? 'done' : 'idle')
+        : poseSvg(m.key, bx, c.y, HALL_SCALE, m.state === 'done' ? 'done' : 'idle', m.seed ?? 0)
     const fill = m.state === 'done' ? ` fill="${T.goldBright}"` : m.state === 'failed' ? ' class="s"' : ` fill="${m.color}" opacity=".8"`
     const nameY = c.y + HALL_BOX_H + HALL_FLOOR_H + 13
     return figure + hallName(m.name, c.w - 6).map((s, k) => (s ? text(mid, nameY + k * 11, 10, xml(s), ` text-anchor="middle"${fill}`) : '')).join('')
@@ -182,6 +216,7 @@ const FLOOR_H = 8
 const BASE_H = 6
 export const FEED_ROW = 16
 /** The pixels of a chamber that are not feed rows, for a figure `scale` (with a step note). */
+const REPORT_ROW = 14
 const roomFixedH = (scale: number) => TITLE_H + LINTEL_H + 4 + POSE_H * scale + FLOOR_H + 17 + 8 + BAR_H + 14 + 8 + 6 + BASE_H
 /** The figure's scale in the focus view, by the drawing's width. */
 export const focusScale = (W: number) => (W >= 420 ? 4.5 : W >= 320 ? 4 : 3)
@@ -189,7 +224,11 @@ export const focusScale = (W: number) => (W >= 420 ? 4.5 : W >= 320 ? 4 : 3)
 /** Where each part of a chamber goes at width W: every text is cut to its own slot. */
 export function roomLayout(W: number, room: Room, feed: Feed, scale = CH_SCALE, corner = OPEN_W) {
   const boxW = POSE_W * scale
-  const top = TITLE_H + LINTEL_H
+  // An ended agent's report: a "Report" line and a few wrapped lines under the title strip, above the lintel.
+  const report = wrapLines(reportText(room), W - 4, REPORT_LINES, t => textWidth(t, 11), (t, w) => fitText(t, 11, w))
+  const reportH = report.length > 0 ? (report.length + 1) * REPORT_ROW + 4 : 0
+  const lintelY = TITLE_H + reportH
+  const top = lintelY + LINTEL_H
   const poseX = r1((W - boxW) / 2)
   const poseY = top + 4
   const groundY = poseY + POSE_H * scale
@@ -214,6 +253,8 @@ export function roomLayout(W: number, room: Room, feed: Feed, scale = CH_SCALE, 
   }))
   return {
     boxW,
+    report,
+    lintelY,
     top,
     poseX,
     poseY,
@@ -251,7 +292,7 @@ export function roomSvg(W: number, room: Room, feed: Feed, scale = CH_SCALE, cor
   const L = roomLayout(W, room, feed, scale, corner)
   const k = scale / CH_SCALE
   const mid = W / 2
-  const lintelY = TITLE_H
+  const lintelY = L.lintelY
   const frame =
     `<rect x="${COL}" y="${L.top}" width="${W - 2 * COL}" height="${r1(L.groundY - L.top)}" fill="${T.purpleDim}" opacity=".22"/>` +
     `<rect x="${COL}" y="${r1(L.groundY + FLOOR_H)}" width="${W - 2 * COL}" height="${r1(L.H - BASE_H - L.groundY - FLOOR_H)}" fill="${T.panel}" opacity=".7"/>` +
@@ -269,7 +310,7 @@ export function roomSvg(W: number, room: Room, feed: Feed, scale = CH_SCALE, cor
   const figure =
     room.status === 'failed'
       ? godSvg(room.key, L.poseX + 8 * scale, L.poseY + 8 * scale, scale, false, true)
-      : poseSvg(room.key, L.poseX, L.poseY, scale, room.status === 'running' ? 'work' : 'done')
+      : poseSvg(room.key, L.poseX, L.poseY, scale, room.status === 'running' ? 'work' : 'done', idSeed(room.id))
   const feedRows =
     L.rows.length === 0
       ? text(L.inL, L.feedTop + (feed.older > 0 ? FEED_ROW : 0) + 12, 11, 'No actions yet.', ' class="s"')
@@ -283,8 +324,14 @@ export function roomSvg(W: number, room: Room, feed: Feed, scale = CH_SCALE, cor
           )
           .join('')
   const earlier = feed.older > 0 ? text(L.inL, L.feedTop + 12, 11, `+${feed.older} earlier`, ' class="s"') : ''
+  const reportBlock =
+    L.report.length === 0
+      ? ''
+      : text(2, TITLE_H + 11, 11, 'Report', ` fill="${color}" font-weight="600"`) +
+        L.report.map((s, i) => text(2, TITLE_H + 11 + (i + 1) * REPORT_ROW, 11, xml(s), ' class="t"')).join('')
   const body =
     text(2, 17, 13, xml(L.title), ' class="t" font-weight="600"') +
+    reportBlock +
     L.clock.svg +
     `<g class="mark">${statusMark(L.markX, 13, room.status)}</g>` +
     frame +
@@ -299,7 +346,7 @@ export function roomSvg(W: number, room: Room, feed: Feed, scale = CH_SCALE, cor
   // A chamber that just opened fades in; the negative delay keeps a redraw from replaying it.
   const isNew = room.status === 'running' && room.ms < 600
   const drawn = isNew ? `<g class="arr" style="animation:eoh-in .6s ease-out ${-r1(room.ms / 1000)}s both">${body}</g>` : body
-  return { svg: svgDoc(W, L.H, gridY, CSS + drawn), h: L.H }
+  return { svg: svgDoc(W, L.H, gridY, CSS + drawn), h: L.H, report: L.report.join(' ') }
 }
 
 // --- terminal: bordered text rooms. shortcut: a cell is taken as one code point wide, as the Gods pane's `trunc`
@@ -392,6 +439,7 @@ export const registerTemple = (on: On) => {
         ms: Math.max(0, (a.endedAt ?? now) - a.startedAt),
         tokens: a.tokens ?? 0,
         ...(a.steps === undefined ? {} : { steps: a.steps }),
+        ...(a.report === undefined ? {} : { report: a.report }),
       }
     }
     const focused = focusId === '' ? undefined : list.find(a => a.id === focusId)
@@ -477,6 +525,7 @@ export const registerTemple = (on: On) => {
       const bw = Math.max(6, Math.min(24, IW - 14))
       const bar = termBar(r, bw)
       const said = r.steps && r.steps.total > 0 ? `${r.steps.done}/${r.steps.total} ${r.steps.note}`.trim() : stateOf(r)
+      const report = wrapLines(reportText(r), IW, REPORT_LINES, cells, trunc)
       return (
         <Box key={`room:${r.id}`} flexDirection="column" width={W}>
           <Box flexDirection="row">
@@ -488,6 +537,8 @@ export const registerTemple = (on: On) => {
             </Button>
             <Text color={edge}>{` ${'─'.repeat(Math.max(0, W - 4 - cells(head)))}┐`}</Text>
           </Box>
+          {report.length > 0 ? line(`report:${r.id}`, edge, [['Report', edge, true]]) : null}
+          {report.map((s, i) => line(`report:${r.id}:${i}`, edge, [[s, T.text]]))}
           <Box flexDirection="row" width={W}>
             <Text color={edge}>│ </Text>
             <Text color={STATUS_COLOR[r.status]}>{GLYPH[r.status]} </Text>
@@ -542,8 +593,8 @@ export const registerTemple = (on: On) => {
       const room = roomOf(focused)
       const scale = focusScale(SW)
       const fit = Svg
-        ? Math.floor((e.props.scroll.bodyRows * DESKTOP_ROW_PX - TEMPLE_HEAD_H - DESKTOP_ROW_PX - roomFixedH(scale)) / FEED_ROW)
-        : e.props.scroll.bodyRows - 8
+        ? Math.floor((e.props.scroll.bodyRows * DESKTOP_ROW_PX - TEMPLE_HEAD_H - DESKTOP_ROW_PX - roomFixedH(scale) - (reportText(room) ? (REPORT_LINES + 1) * REPORT_ROW + 4 : 0)) / FEED_ROW)
+        : e.props.scroll.bodyRows - 8 - (reportText(room) ? REPORT_LINES + 1 : 0)
       const feed = agentFeed(log, room.id, Math.max(5, Math.min(30, fit)))
       const head = header(`${whoOf(room)} · ${stateOf(room)}`)
       if (!Svg) {
@@ -564,7 +615,7 @@ export const registerTemple = (on: On) => {
           <Svg
             key={`room:${room.id}`}
             source={drawn.svg}
-            alt={`${nameOf(room)}: ${whoOf(room)}, ${stateOf(room)}, ${elapsedLabel(room)}${doing.length > 0 ? `; doing ${doing.join(', ')}` : ''}`}
+            alt={`${nameOf(room)}: ${whoOf(room)}, ${stateOf(room)}, ${elapsedLabel(room)}${doing.length > 0 ? `; doing ${doing.join(', ')}` : ''}${drawn.report ? `; report: ${drawn.report}` : ''}`}
             width={SW}
             height={drawn.h}
           />
@@ -614,8 +665,9 @@ export const registerTemple = (on: On) => {
         name: c.title || shortType(c.type),
         color: accentOf(c.tier),
         state: c.failed ? ('failed' as const) : ('done' as const),
+        seed: idSeed(c.id),
       })),
-      ...model.hall.idle.map(m => ({ key: m.key, name: m.name, color: m.color, state: 'idle' as const })),
+      ...model.hall.idle.map(m => ({ key: m.key, name: m.name, color: m.color, state: 'idle' as const, seed: members.indexOf(m) + 1 })),
     ]
     const hall = hallSvg(SW, hallCells, y)
     at(hall.h)

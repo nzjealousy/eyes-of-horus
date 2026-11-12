@@ -20,7 +20,8 @@ export const turnSeq = atom({ plugin: 'eyes-of-horus', key: 'turnSeq' } as const
 export const turnId = atom({ plugin: 'eyes-of-horus', key: 'turnId' } as const, '')
 export const tail = atom({ plugin: 'eyes-of-horus', key: 'tail' } as const, 0)
 export const terminalBusy = atom({ plugin: 'eyes-of-horus', key: 'terminalBusy' } as const, false)
-export const agents = atom({ plugin: 'eyes-of-horus', key: 'agents' } as const, [], { shape: 'agents-1' })
+// agents-2: gained report; agents-1 values read as absent.
+export const agents = atom({ plugin: 'eyes-of-horus', key: 'agents' } as const, [], { shape: 'agents-2' })
 // progress-2: gained finishedAt; progress-1 values read as absent.
 export const progress = atom({ plugin: 'eyes-of-horus', key: 'progress' } as const, null, { shape: 'progress-2' })
 export const ponytail = atom({ plugin: 'eyes-of-horus', key: 'ponytail' } as const, { level: 'off' }, { shape: 'ponytail-1' })
@@ -44,17 +45,22 @@ export const paneCollapsed = atom(
   { shape: 'pane-collapsed-2' },
 )
 
-/** Hall of Truth entries scrolled back from the newest; 0 follows the newest. Written by the pane. */
+/** Hall of Truth entries scrolled back from the newest; 0 follows the newest. Written by the pane (and reset on /clear). */
 export const railOffset = atom({ plugin: 'eyes-of-horus', key: 'railOffset' } as const, 0)
-/** The Hall of Truth's filter chip and the user's turn fold marks (see hall.ts isTurnOpen). Written by the pane. */
+/** The Hall of Truth's filter chip and the user's turn fold marks (see hall.ts isTurnOpen). Written by the pane (and reset on /clear). */
 export const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const, 'all')
 export const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, [], { shape: 'hall-open-1' })
-/** The Stop Button pressed once and awaiting its confirming press: 'turn', `agent:<agentId>`, or ''. Written by the pane. */
+/** The Stop Button pressed once and awaiting its confirming press: 'turn', `agent:<agentId>`, or ''. Written by the pane (and reset on /clear). */
 export const armedStop = atom({ plugin: 'eyes-of-horus', key: 'armedStop' } as const, '')
 /** The agent id whose chamber the Temple focuses, '' for the overview (see hall.ts focusChamber). Written by the pane (a card's ↗) and the Temple. */
 export const chamber = atom({ plugin: 'eyes-of-horus', key: 'chamber' } as const, '')
 
 export const LOG_CAP = 400
+const REPORT_CAP = 400
+// The session log is kept in $.store per session (state is the host's, for this process only), so a resumed session
+// gets its Hall of Truth back. Only the newest STORED_SESSIONS sessions are kept: the store is capped at 4 MiB.
+const STORED_SESSIONS = 5
+const STORED_ENTRIES = 100 // only the newest entries are saved: about a quarter of the cap, so each write stays small
 const AGENT_TOOL_CAP = 30
 const SHELLS = ['Bash', 'PowerShell']
 const LEVELS: readonly HorusPonytailLevel[] = ['off', 'lite', 'full', 'ultra']
@@ -77,6 +83,11 @@ const redact = (s: string) =>
     .replace(/(bearer\s+|(?:token|key|secret|password|passwd|auth)[=:]\s*)\S+/gi, '$1***')
     .replace(/\/\/[^\s/:@]+:[^\s/@]+@/g, '//***@')
 const firstLine = (s: string, max = 80) => redact(clean(s.trim().split('\n')[0] ?? '')).slice(0, max)
+/** An agent's final answer as its focus view shows it: control-free, credentials masked, runs of space as one, cut with '…'. */
+export const reportOf = (answer: string) => {
+  const s = redact(clean(answer)).replace(/\s+/g, ' ').trim()
+  return s.length > REPORT_CAP ? s.slice(0, REPORT_CAP - 1) + '…' : s
+}
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
 // Model-written text kept as a short, control-free label.
 const label = (v: unknown, max = 200) => {
@@ -183,7 +194,7 @@ async function addAgent($: $, id: string, rawType: string, rawTitle: string) {
     if (isNew) return [...list, { id, type, title, status: 'running', startedAt: at }]
     return list.map(a => {
       if (a.id !== id) return a
-      const { endedAt: _, ...rest } = a
+      const { endedAt: _, report: __, ...rest } = a
       return { ...rest, status: 'running' }
     })
   })
@@ -214,6 +225,30 @@ async function refreshPonytail($: $) {
   if ((await read($, ponytail)).level !== level) await update($, ponytail, () => ({ level }))
 }
 
+// The log's copy in $.store under `log:<session id>`; `logs` lists the ids kept, oldest first.
+async function storeLog($: $) {
+  const log = await read($, sessionLog)
+  if (log.length === 0) return
+  const id = await $.session.id()
+  const ids = await $.store.get('logs')
+  const kept = [...(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x !== id) : []), id]
+  for (const old of kept.slice(0, -STORED_SESSIONS)) await $.store.delete(`log:${old}`)
+  await $.store.set(`log:${id}`, { shape: sessionLog.shape, log: log.slice(-STORED_ENTRIES) })
+  await $.store.set('logs', kept.slice(-STORED_SESSIONS))
+}
+
+// A new process (a resumed session) starts with an empty log: the stored copy comes back, the turn count follows it,
+// and what was running when the old process ended is marked failed (nothing runs it here). A hot reload
+// (`/reload-plugins`) keeps state, so the log is not empty and nothing is read.
+async function restoreLog($: $) {
+  if ((await read($, sessionLog)).length > 0) return
+  const kept = (await $.store.get(`log:${await $.session.id()}`)) as { shape?: unknown; log?: unknown } | undefined
+  if (kept === undefined || kept.shape !== sessionLog.shape || !Array.isArray(kept.log)) return
+  const log = (kept.log as HorusLogEntry[]).slice(-LOG_CAP).map(l => (l.status === 'running' ? { ...l, status: 'failed' as const, endedAt: l.at } : l))
+  await update($, sessionLog, () => log)
+  await update($, turnSeq, n => Math.max(n, ...log.map(l => l.turn)))
+}
+
 function toolLabel(tool: string, args: Readonly<Record<string, unknown>>) {
   // A shell command can carry secrets: shells show their description only.
   const keys = SHELLS.includes(tool) ? ['description'] : ['description', 'command', 'file_path', 'pattern', 'url', 'query']
@@ -235,6 +270,7 @@ export const registerCore = (on: On) => {
         await update($, usage, x => ({ ...x, startedAt: u.startedAt }))
       }
     })
+    await safe(() => restoreLog($))
     return started
   })
 
@@ -337,11 +373,19 @@ export const registerCore = (on: On) => {
       const id = e.agentId
       if (id !== undefined) {
         const status = e.reason === 'answer' ? 'done' : 'failed'
+        const report = reportOf(e.answer)
+        let name = ''
         await saveAgents($, list =>
-          list.map(a => (a.id === id ? { ...a, status, endedAt: at, tokens: (a.tokens ?? 0) + tokens } : a)),
+          list.map(a => {
+            if (a.id !== id) return a
+            name = a.title || a.type
+            return { ...a, status, endedAt: at, tokens: (a.tokens ?? 0) + tokens, ...(report ? { report } : {}) }
+          }),
         )
         await endEntry($, `agent:${id}`, status)
         await update($, usage, u => ({ ...u, tokensTotal: u.tokensTotal + tokens }))
+        // An in-app toast (never $.ui.notify, which leaves the app); its own safe() so it cannot block the rest.
+        if (name !== '') await safe(async () => $.ui.toast(`Horus: ${firstLine(name)} ${status === 'done' ? 'finished' : 'failed'}`))
         return
       }
       // Tools still listed here were cut off with the turn.
@@ -355,6 +399,7 @@ export const registerCore = (on: On) => {
       if (e.answer.trim() !== '') await log($, 'reply', firstLine(e.answer))
       await refreshPonytail($)
     })
+    if (e.agentId === undefined) await safe(() => storeLog($))
     return next(e)
   })
 
@@ -374,6 +419,12 @@ export const registerCore = (on: On) => {
       await update($, armedStop, () => armedStop.initial)
     })
     return ended
+  })
+
+  // Any other end (exit, a resume elsewhere, logout): the log is kept for `claude --resume`.
+  on('session.end', { reason: ['resume', 'prompt_input_exit', 'logout', 'other'] }, async ($, e, next) => {
+    await safe(() => storeLog($))
+    return next(e)
   })
 
   on('session.measure', async ($, e, next) => {

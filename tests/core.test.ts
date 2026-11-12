@@ -11,9 +11,11 @@ import {
   sessionLog,
   tail,
   terminalBusy,
+  turnId,
   turnSeq,
   usage,
 } from '../hooks/core'
+import type { HorusLogEntry } from '../types'
 
 // Nothing sits beneath the plugin: these hooks stand for the engine. A test's own hook may not read `$.state`,
 // so the state is read off the writes passing down to the kit; `inTool` records it as each tool ran.
@@ -23,6 +25,7 @@ function engine(on: On, flag: string | null = 'lite\n', failKey?: string) {
   const peek = () => ({
     phase: val(phase),
     turnSeq: val(turnSeq),
+    turnId: val(turnId),
     tail: val(tail),
     terminalBusy: val(terminalBusy),
     agents: val(agents),
@@ -41,8 +44,10 @@ function engine(on: On, flag: string | null = 'lite\n', failKey?: string) {
   })
   const clock = mock.clock(on, { now: 1000 })
   mock.env(on, { HOME: '/home/u' })
-  on('tool.call', () => {
+  on('tool.call', async (_, e) => {
     inTool.push(peek())
+    if (e.tool === 'Slow') await clock.advance(250)
+    if (e.tool === 'Boom') throw new Error('tool blew up')
     return { result: {} }
   })
   on('fs.read', () => (flag === null ? { deny: 'ENOENT' } : { value: flag }))
@@ -184,10 +189,11 @@ test('savvy-progress calls are captured, merged and joined with agents', async (
   let s = peek()
   expect(s.agents.map(a => `${a.id}/${a.title}/${a.status}`)).toEqual(['a1/Mod core/running'])
   expect(s.progress?.tasks[0]?.status).toBe('running')
-  expect(s.sessionLog.at(-1)).toEqual({ at: 1000, kind: 'agent', label: 'Mod core', agentId: 'a1' })
+  expect(s.sessionLog.at(-1)).toEqual({ id: 'agent:a1', at: 1000, kind: 'agent', label: 'Mod core', turn: 1, status: 'running', agentId: 'a1' })
 
   await $.turn.complete({ answer: 'report', durationMs: 9, isAborted: false, turnId: 'ta', agentId: 'a1', reason: 'answer', usage: USAGE })
   s = peek()
+  expect(s.sessionLog.at(-1)).toEqual({ id: 'agent:a1', at: 1000, kind: 'agent', label: 'Mod core', turn: 1, status: 'done', endedAt: 1000, agentId: 'a1' })
   expect(s.agents[0]?.status).toBe('done')
   expect(s.agents[0]?.tokens).toBe(100)
   expect(s.progress?.tasks[0]?.status).toBe('done')
@@ -265,13 +271,83 @@ test('a failing state write does not stop the tool call', async ($, on) => {
   expect(inTool.length).toBe(1) // the tool ran
 })
 
-test('sessionLog keeps the newest 200 entries', { timeoutMs: 60000 }, async ($, on) => {
+test('sessionLog keeps the newest 400 entries', { timeoutMs: 120000 }, async ($, on) => {
   const { peek } = engine(on)
-  for (let i = 0; i < 205; i++) await callTool($, { tool: 'Grep', pattern: `p${i}` })
+  for (let i = 0; i < 405; i++) await callTool($, { tool: 'Grep', pattern: `p${i}` })
   const log = peek().sessionLog
-  expect(log.length).toBe(200)
+  expect(log.length).toBe(400)
   expect(log[0]?.label).toBe('Grep · p5')
-  expect(log.at(-1)?.label).toBe('Grep · p204')
+  expect(log.at(-1)?.label).toBe('Grep · p404')
+})
+
+test('a tool entry runs, then ends done with its duration', async ($, on) => {
+  const { inTool, peek } = engine(on)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await callTool($, { tool: 'Slow', file_path: 'a.ts' })
+  const running = inTool[0]?.sessionLog.at(-1)
+  expect(running?.status).toBe('running')
+  expect(running?.endedAt).toBe(undefined)
+  const { id, ...rest } = peek().sessionLog.at(-1) as HorusLogEntry
+  expect(rest).toEqual({ at: 1000, kind: 'tool', label: 'Slow · a.ts', turn: 1, status: 'done', endedAt: 1250 })
+  expect(id).toBe(running?.id) // the call's tool_use_id, from start to end
+  expect(id === '' || id.startsWith('tool:')).toBe(false)
+  // Prompt entries carry <kind>:<turn>:<at>.
+  expect(peek().sessionLog[0]?.id).toBe('prompt:1:1000')
+})
+
+test('a tool that throws ends failed and still clears the main loop', async ($, on) => {
+  const { peek } = engine(on)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  let threw = false
+  await callTool($, { tool: 'Boom' }).catch(() => (threw = true))
+  expect(threw).toBe(true)
+  const s = peek()
+  expect(s.sessionLog.at(-1)).toMatchObject({ kind: 'tool', label: 'Boom', status: 'failed', endedAt: 1000 })
+  expect(s.phase).toBe('thinking')
+})
+
+test('a subagent tool call is logged under its agent and leaves the main loop alone', async ($, on) => {
+  const { inTool, peek } = engine(on)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await callTool($, { tool: 'Bash', command: 'rm -rf x', description: 'Clean', agentId: 'a9' })
+  expect(inTool.at(-1)?.phase).toBe('thinking')
+  expect(inTool.at(-1)?.terminalBusy).toBe(false)
+  const s = peek()
+  expect(s.phase).toBe('thinking')
+  expect(s.terminalBusy).toBe(false)
+  expect(s.sessionLog.at(-1)).toMatchObject({ kind: 'tool', label: 'Bash · Clean', turn: 1, status: 'done', agentId: 'a9' })
+})
+
+test('a subagent logs at most 30 tool calls', { timeoutMs: 60000 }, async ($, on) => {
+  const { peek } = engine(on)
+  for (let i = 0; i < 35; i++) await callTool($, { tool: 'Grep', pattern: `p${i}`, agentId: 'a9' })
+  await callTool($, { tool: 'Grep', pattern: 'other', agentId: 'a8' })
+  await callTool($, { tool: 'Grep', pattern: 'main' })
+  const log = peek().sessionLog
+  expect(log.filter(l => l.agentId === 'a9').length).toBe(30)
+  expect(log.filter(l => l.agentId === 'a9').at(-1)?.label).toBe('Grep · p29')
+  expect(log.slice(-2).map(l => `${l.agentId}:${l.label}`)).toEqual(['a8:Grep · other', 'undefined:Grep · main'])
+})
+
+test('an agent entry ends failed when its turn does not answer', async ($, on) => {
+  const { clock, peek } = engine(on)
+  await $.turn.start({ text: 'wake', turnId: 'tb', agentId: 'b1' })
+  expect(peek().sessionLog.at(-1)).toMatchObject({ id: 'agent:b1', kind: 'agent', status: 'running', agentId: 'b1' })
+  await clock.advance(300)
+  await $.turn.complete({ answer: '', durationMs: 9, isAborted: true, turnId: 'tb', agentId: 'b1', reason: 'aborted', usage: USAGE })
+  expect(peek().sessionLog.at(-1)).toMatchObject({ id: 'agent:b1', status: 'failed', endedAt: 1300 })
+})
+
+test('turnId follows the main loop only', async ($, on) => {
+  const { peek } = engine(on)
+  expect(peek().turnId).toBe('')
+  await $.turn.start({ text: 'go', turnId: 't7' })
+  expect(peek().turnId).toBe('t7')
+  await $.turn.start({ text: 'sub', turnId: 'ts', agentId: 'b1' })
+  await $.turn.complete({ answer: 'r', durationMs: 1, isAborted: false, turnId: 'ts', agentId: 'b1', reason: 'answer', usage: USAGE })
+  expect(peek().turnId).toBe('t7')
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't7', reason: 'answer', usage: USAGE })
+  expect(peek().turnId).toBe('')
 })
 
 test('ponytail level and context usage are read at session start', async ($, on) => {

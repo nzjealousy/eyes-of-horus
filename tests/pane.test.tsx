@@ -93,7 +93,7 @@ test('formatting: elapsed, tokens, cost, truncation, rail window', async () => {
   expect([fmtTokens(950), fmtTokens(12_400), fmtTokens(2_500_000)]).toEqual(['950', '12k', '2.5M'])
   expect([fmtCost(1.5), fmtCost(12.34)]).toEqual(['≈$1.50', '≈$12.3'])
   expect([trunc('abcdef', 4), trunc('abc', 4), trunc('abc', 0)]).toEqual(['abc…', 'abc', ''])
-  const log: HorusLogEntry[] = Array.from({ length: 10 }, (_, i) => ({ at: i, kind: 'tool', label: `t${i}` }))
+  const log: HorusLogEntry[] = Array.from({ length: 10 }, (_, i) => ({ id: `t${i}`, at: i, kind: 'tool', label: `t${i}`, turn: 1 }))
   expect(railWindow(log, 3).map(r => r.label)).toEqual(['t7', 't8', 't9'])
   expect(railWindow([], 3)).toEqual([])
   const c = (status: Card['status'], ms?: number): Card => ({ key: 'k', depth: 0, type: 'x', title: 't', status, ...(ms === undefined ? {} : { ms }) })
@@ -218,7 +218,7 @@ const PANE = {
 
 // The state beneath the plugin: seeded values (unwrapped); any other key (the pane's folds) is the kit's own store.
 function seed(on: On, values: Record<string, unknown>) {
-  const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-1', sessionLog: 'log-1', usage: 'usage-1' }
+  const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-1', sessionLog: 'log-2', usage: 'usage-1' }
   on('state.get', (_, e, next) => {
     const shape = shapes[e.key]
     if (shape === undefined) return next(e)
@@ -235,9 +235,9 @@ const SEEDED = {
   ],
   progress: flow([{ title: 'Done task' }, { title: 'Planned task', tier: 'light' }]),
   sessionLog: [
-    { at: 1, kind: 'prompt', label: 'make it so' },
-    { at: 2, kind: 'tool', label: 'Read · a.ts' },
-    { at: 3, kind: 'reply', label: 'ok' },
+    { id: 'prompt:1:1', at: 1, kind: 'prompt', label: 'make it so', turn: 1 },
+    { id: 'tu1', at: 2, kind: 'tool', label: 'Read · a.ts', turn: 1, status: 'done', endedAt: 3 },
+    { id: 'reply:1:3', at: 3, kind: 'reply', label: 'ok', turn: 1 },
   ],
   usage: { contextPct: 41.6, contextUsed: 0, contextMax: 0, tokensTotal: 12_400, costUsd: 0.42, agentTimeMs: 125_000, turns: 3 },
 }

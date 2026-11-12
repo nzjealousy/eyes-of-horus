@@ -17,6 +17,7 @@ import type {
 export const phase = atom({ plugin: 'eyes-of-horus', key: 'phase' } as const, 'idle')
 export const phaseSince = atom({ plugin: 'eyes-of-horus', key: 'phaseSince' } as const, 0)
 export const turnSeq = atom({ plugin: 'eyes-of-horus', key: 'turnSeq' } as const, 0)
+export const turnId = atom({ plugin: 'eyes-of-horus', key: 'turnId' } as const, '')
 export const tail = atom({ plugin: 'eyes-of-horus', key: 'tail' } as const, 0)
 export const terminalMode = atom({ plugin: 'eyes-of-horus', key: 'terminalMode' } as const, false)
 export const terminalBusy = atom({ plugin: 'eyes-of-horus', key: 'terminalBusy' } as const, false)
@@ -33,7 +34,8 @@ export const voice = atom(
   { enabled: false, speaking: false, subtitle: '', sentenceIndex: 0 },
   { shape: 'voice-1' },
 )
-export const sessionLog = atom({ plugin: 'eyes-of-horus', key: 'sessionLog' } as const, [], { shape: 'log-1' })
+// log-2: entries gained id, turn, status and endedAt; log-1 values read as absent.
+export const sessionLog = atom({ plugin: 'eyes-of-horus', key: 'sessionLog' } as const, [], { shape: 'log-2' })
 const inflight = atom({ plugin: 'eyes-of-horus', key: 'inflight' } as const, [], { shape: 'inflight-1' })
 export const paneCollapsed = atom(
   { plugin: 'eyes-of-horus', key: 'paneCollapsed' } as const,
@@ -44,7 +46,8 @@ export const paneCollapsed = atom(
 /** Hall of Truth entries scrolled back from the newest; 0 follows the newest. Written by the pane. */
 export const railOffset = atom({ plugin: 'eyes-of-horus', key: 'railOffset' } as const, 0)
 
-export const LOG_CAP = 200
+export const LOG_CAP = 400
+const AGENT_TOOL_CAP = 30
 const SHELLS = ['Bash', 'PowerShell']
 const LEVELS: readonly HorusPonytailLevel[] = ['off', 'lite', 'full', 'ultra']
 const PROGRESS_TOOL = 'mcp__savvy-progress__progress'
@@ -113,10 +116,27 @@ export const withStatus = (p: HorusProgress, list: readonly HorusAgent[]): Horus
 
 const safe = (f: () => Promise<unknown>) => f().then(() => undefined, () => undefined)
 
-async function log($: $, kind: HorusLogKind, label: string, agentId?: string) {
+async function log($: $, kind: HorusLogKind, label: string, extra: Partial<Pick<HorusLogEntry, 'id' | 'status' | 'agentId'>> = {}) {
   const at = await $.clock.now()
-  const entry: HorusLogEntry = agentId === undefined ? { at, kind, label } : { at, kind, label, agentId }
-  await update($, sessionLog, list => [...list, entry].slice(-LOG_CAP))
+  const turn = await read($, turnSeq)
+  const entry: HorusLogEntry = { id: `${kind}:${turn}:${at}`, at, kind, label, turn, ...extra }
+  const agentId = extra.agentId
+  await update($, sessionLog, list =>
+    // A subagent's tools are capped per agent so one busy worker cannot flush the log.
+    // shortcut: counts what the log still holds, so an agent whose entries aged out logs again; keep a counter if that shows.
+    kind === 'tool' && agentId !== undefined && list.filter(l => l.kind === 'tool' && l.agentId === agentId).length >= AGENT_TOOL_CAP
+      ? list
+      : [...list, entry].slice(-LOG_CAP),
+  )
+}
+
+// Ends the newest entry with this id; an id no longer (or never) logged changes nothing.
+async function endEntry($: $, id: string, status: 'done' | 'failed') {
+  const endedAt = await $.clock.now()
+  await update($, sessionLog, list => {
+    const i = list.findLastIndex(l => l.id === id)
+    return i < 0 ? list : list.with(i, { ...(list[i] as HorusLogEntry), status, endedAt })
+  })
 }
 
 async function setPhase($: $, to: HorusPhase, when: (from: HorusPhase) => boolean = () => true) {
@@ -156,7 +176,7 @@ async function addAgent($: $, id: string, rawType: string, rawTitle: string) {
       return { ...rest, status: 'running' }
     })
   })
-  if (isNew) await log($, 'agent', title || type, id)
+  if (isNew) await log($, 'agent', title || type, { id: `agent:${id}`, status: 'running', agentId: id })
 }
 
 async function saveContext($: $, context: SessionContextUsage, cost?: SessionCost) {
@@ -212,6 +232,7 @@ export const registerCore = (on: On) => {
       return next(e)
     }
     await update($, turnSeq, n => n + 1)
+    await update($, turnId, () => e.turnId)
     await setPhase($, 'thinking')
     // Harness blocks (`<task-notification>`, `<system-reminder>`, ...) arrive as prompts too; they are noise in the rail.
     const text = e.text.trim()
@@ -220,18 +241,30 @@ export const registerCore = (on: On) => {
   })
 
   on('tool.call', async ($, e, next) => {
-    if (e.agentId !== undefined) return next(e)
+    // A subagent's call is logged under its agent but leaves the main loop's phase, inflight and terminalBusy alone.
+    const agentId = e.agentId
     const call: HorusInflight = { id: e.tool_use_id, tool: String(e.tool) }
+    // An Agent call is logged as the agent itself, at agent.spawn.
+    const logged = call.tool !== 'Agent'
     // Bookkeeping must never stop the user's tool: a failure here is dropped and the tool still runs.
     await safe(async () => {
-      await track($, list => [...list, call])
-      // An Agent call is logged as the agent itself, at agent.spawn.
-      if (call.tool !== 'Agent') await log($, 'tool', toolLabel(call.tool, e as unknown as Record<string, unknown>))
+      if (agentId === undefined) await track($, list => [...list, call])
+      if (logged) {
+        const text = toolLabel(call.tool, e as unknown as Record<string, unknown>)
+        await log($, 'tool', text, agentId === undefined ? { id: call.id, status: 'running' } : { id: call.id, status: 'running', agentId })
+      }
     })
+    let status: 'done' | 'failed' = 'failed'
     try {
-      return await next(e)
+      const r = await next(e)
+      // Core sets isError when the tool threw, was interrupted or answered an error; a deny means it never ran.
+      if (r.isError !== true && r.deny === undefined) status = 'done'
+      return r
     } finally {
-      await safe(() => track($, list => list.filter(c => c.id !== call.id)))
+      await safe(async () => {
+        if (agentId === undefined) await track($, list => list.filter(c => c.id !== call.id))
+        if (logged) await endEntry($, call.id, status)
+      })
     }
   })
 
@@ -284,11 +317,13 @@ export const registerCore = (on: On) => {
       await saveAgents($, list =>
         list.map(a => (a.id === id ? { ...a, status, endedAt: at, tokens: (a.tokens ?? 0) + tokens } : a)),
       )
+      await endEntry($, `agent:${id}`, status)
       await update($, usage, u => ({ ...u, tokensTotal: u.tokensTotal + tokens }))
       return next(e)
     }
     // Tools still listed here were cut off with the turn.
     await update($, inflight, () => [])
+    await update($, turnId, () => '')
     if (await read($, terminalBusy)) await update($, terminalBusy, () => false)
     await setPhase($, 'idle')
     await update($, tail, () => at)

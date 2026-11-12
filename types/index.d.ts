@@ -59,9 +59,17 @@ export type HorusVoice = {
 export type HorusLogKind = 'prompt' | 'tool' | 'agent' | 'reply'
 
 export type HorusLogEntry = {
+  /** A tool's tool_use_id, `agent:<agentId>` for an agent, else `<kind>:<turn>:<at>`. */
+  id: string
   at: number
   kind: HorusLogKind
   label: string
+  /** turnSeq when the entry was logged. */
+  turn: number
+  /** Tools and agents only: running until the call or the agent's turn ends. */
+  status?: HorusAgentStatus
+  endedAt?: number
+  /** The subagent that ran the tool, or the agent the entry stands for. */
   agentId?: string
 }
 
@@ -74,6 +82,8 @@ declare module 'claude-code' {
       phase: HorusPhase
       phaseSince: number
       turnSeq: number
+      /** The main loop's current turn id; '' between turns. */
+      turnId: string
       tail: number
       agents: Shaped<HorusAgent[]>
       progress: Shaped<HorusProgress | null>

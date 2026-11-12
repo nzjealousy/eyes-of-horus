@@ -1,0 +1,4 @@
+{
+  "imports": { "claude-code": "./claude-code-stub.mjs" },
+  "compilerOptions": { "jsx": "react" }
+}

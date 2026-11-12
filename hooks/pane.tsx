@@ -117,7 +117,7 @@ export const groupCards = (cards: readonly Card[]) => ({
 
 export const GLYPH: Record<HorusTaskStatus, string> = { running: '●', done: '✓', failed: '✗', pending: '○' }
 export const STATUS_COLOR: Record<HorusTaskStatus, string> = { running: T.aqua, done: T.ok, failed: T.err, pending: T.dim }
-const KIND: Record<HorusLogKind, [string, string]> = {
+export const KIND: Record<HorusLogKind, [string, string]> = {
   prompt: ['❯', T.gold],
   tool: ['⚙', T.aqua],
   agent: ['◈', T.violet],

@@ -48,6 +48,8 @@ export const railOffset = atom({ plugin: 'eyes-of-horus', key: 'railOffset' } as
 /** The Hall of Truth's filter chip and the user's turn fold marks (see hall.ts isTurnOpen). Written by the pane. */
 export const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const, 'all')
 export const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, [], { shape: 'hall-open-1' })
+/** The Stop Button pressed once and awaiting its confirming press: 'turn', `agent:<agentId>`, or ''. Written by the pane. */
+export const armedStop = atom({ plugin: 'eyes-of-horus', key: 'armedStop' } as const, '')
 
 export const LOG_CAP = 400
 const AGENT_TOOL_CAP = 30

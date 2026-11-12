@@ -5,8 +5,21 @@ import type { HorusAgent, HorusLogKind, HorusProgress, HorusTaskStatus, HorusUsa
 import { fmtElapsed } from './clients/agent-clock'
 import * as core from './core'
 import { GOD_H, GOD_TIERS, GOD_W, godGlyph, godName, godSvg, slaveKey } from './gods'
-import { FILTER_LABEL, HALL_FILTERS, hallLines, headLabel, newestTurn, nowLine, toggleTurn } from './hall'
-import type { HallHead, HallRow } from './hall'
+import {
+  barRuns,
+  barSegments,
+  disarmStop,
+  FILTER_LABEL,
+  HALL_FILTERS,
+  hallLines,
+  headLabel,
+  newestTurn,
+  nowLine,
+  pressStop,
+  STOP_ARM_MS,
+  toggleTurn,
+} from './hall'
+import type { BarSeg, HallHead, HallRow } from './hall'
 import * as T from './theme'
 
 const PANE = 'horus'
@@ -25,6 +38,8 @@ const phase = atom({ plugin: 'eyes-of-horus', key: 'phase' } as const, core.phas
 const phaseSince = atom({ plugin: 'eyes-of-horus', key: 'phaseSince' } as const, core.phaseSince.initial)
 const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const, core.hallFilter.initial)
 const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, core.hallOpen.initial, { shape: core.hallOpen.shape! })
+const turnId = atom({ plugin: 'eyes-of-horus', key: 'turnId' } as const, core.turnId.initial)
+const armedStop = atom({ plugin: 'eyes-of-horus', key: 'armedStop' } as const, core.armedStop.initial)
 
 export const PANE_TITLE = 'The Field of Reeds (Aaru)'
 export const GODS_LABEL = 'Gods'
@@ -523,9 +538,25 @@ export const railEntries = (rows: number) => Math.max(1, Math.floor(rows))
 
 /** The desktop Gods' drawing width for `cols` body columns. */
 const svgWidth = (cols: number) => Math.max(240, Math.min(900, cols * 8 - 8))
-/** Terminal columns and desktop pixels kept free at the Now line's right end for T3's "Stop turn" Button. */
+/** Terminal columns and desktop pixels kept free at the Now line's right end for its "Stop turn" Button. */
 export const STOP_COLS = 11
 export const STOP_PX = 88
+// A turn header's bar strip: 12 cells of glyphs, or a drawing as wide (8 px a column, as svgWidth takes it), shown
+// from STRIP_MIN_COLS so the header's label keeps its room.
+export const STRIP_CELLS = 12
+export const STRIP_PX = STRIP_CELLS * 8
+export const STRIP_H = 10
+export const STRIP_MIN_COLS = 52
+/** The desktop strip: a thin track, a rounded bar per segment; running ones pulse. */
+export const stripSvg = (segs: readonly BarSeg[]) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${STRIP_PX}" height="${STRIP_H}" viewBox="0 0 ${STRIP_PX} ${STRIP_H}">${CSS}` +
+  `<rect y="4.5" width="${STRIP_PX}" height="1" fill="${T.dim}" opacity="0.5"/>` +
+  segs.map(s => `<rect${s.running ? ' class="live"' : ''} x="${s.x}" y="1" width="${s.w}" height="8" rx="1.5" fill="${s.color}"/>`).join('') +
+  '</svg>'
+// The disarm timer of the armed Stop Button; a press cancels it, so only the newest arming disarms.
+// shortcut: module state, lost on a hot reload (which cancels the timer too); the atom is the truth either way.
+let disarmTimer: ReturnType<EngineInterface['clock']['after']> | undefined
+type StopResult = { deny?: string; isError?: true; text?: string; result?: { message?: string } }
 /** The desktop Now line: its text, then its clock (ticking from `ms` when given), clear of the Stop corner. */
 export const nowSvg = (W: number, label: string, ms?: number) => {
   const H = DESKTOP_ROW_PX
@@ -587,7 +618,7 @@ export const registerPane = (on: On) => {
     const ui = $.ui.resolve(e)
     const { Box, Text, Button, Client } = ui
     const W = Math.max(20, e.props.bodyColumns)
-    const [list, flow, log, use, folded, offset, now, ph, phSince, filter, marks] = await Promise.all([
+    const [list, flow, log, use, folded, offset, now, ph, phSince, filter, marks, tid, armed] = await Promise.all([
       read($, agents),
       read($, progress),
       read($, sessionLog),
@@ -599,6 +630,8 @@ export const registerPane = (on: On) => {
       read($, phaseSince),
       read($, hallFilter),
       read($, hallOpen),
+      read($, turnId),
+      read($, armedStop),
     ])
     const cards = buildCards(list, flow, now)
     const godCards = cards.filter(c => c.tier !== undefined)
@@ -806,18 +839,61 @@ export const registerPane = (on: On) => {
       const tier = type === undefined ? undefined : tierOf(type)
       return tier === undefined ? SLAVE_COLOR : tierColorOf(tier)
     }
+    // Two-step Stop Buttons: a first press arms the Button's key (it reads Sure?), a second within STOP_ARM_MS runs
+    // `run`; a press on another Stop arms that one instead.
+    const stopButton = (key: string, label: string, run: () => Promise<unknown>) => (
+      <Button
+        key={`stop:${key}`}
+        plain
+        onPress={async () => {
+          let fire = false
+          await update($, armedStop, a => {
+            const r = pressStop(a, key)
+            fire = r.fire
+            return r.armed
+          })
+          disarmTimer?.cancel()
+          disarmTimer = fire ? undefined : $.clock.after(STOP_ARM_MS, () => void update($, armedStop, a => disarmStop(a, key)))
+          if (fire) await run()
+        }}
+      >
+        <Text color={T.err} bold={armed === key}>
+          {armed === key ? 'Sure?' : label}
+        </Text>
+      </Button>
+    )
+    // Rejects when `tid` is no longer the running turn's (it ended between the draw and the press).
+    const stopTurn = () => $.turn.abort({ turnId: tid }).catch(() => $.ui.toast(`${PANE_TITLE}: that turn is no longer running`))
+    // An agent stops through the TaskStop tool, as the model would stop it. The typed tool-call union is too deep for
+    // tsc (TS2589), so the input is cast; the loader wants the call spelled $.tool.call(...) at its site.
+    const stopAgent = (agentId: string) => async () => {
+      const r = await ($.tool.call({ tool: 'TaskStop', task_id: agentId } as never) as Promise<unknown> as Promise<StopResult>).catch(
+        (err: unknown): StopResult => ({ deny: err instanceof Error ? err.message : String(err) }),
+      )
+      const why = r.deny ?? (r.isError ? (r.text ?? 'error') : undefined)
+      $.ui.toast(why === undefined ? `${PANE_TITLE}: ${r.result?.message ?? 'agent stopped'}` : `${PANE_TITLE}: cannot stop that agent (${trunc(why, 120)})`)
+    }
+    const canStopTurn = ph !== 'idle' && tid !== ''
+
     const nowInfo = nowLine(log, ph, phSince, tagOf)
     const nowMs = nowInfo.since === undefined ? undefined : Math.max(0, now - nowInfo.since)
     const nowRow =
       e.surface === 'desktop' && 'Svg' in ui ? (
-        // T3 lays its "Stop turn" Button over the drawing's right STOP_PX, kept clear.
-        <ui.Svg
-          key="hall-now"
-          source={nowSvg(svgWidth(W), nowInfo.text, nowMs)}
-          alt={nowMs === undefined ? nowInfo.text : `${nowInfo.text} · ${fmtElapsed(nowMs)}`}
-          width={svgWidth(W)}
-          height={DESKTOP_ROW_PX}
-        />
+        // The "Stop turn" Button lies over the drawing's right STOP_PX, kept clear, as the Gods header's Collapse does.
+        <Box key="hall-now" flexDirection="column" alignSelf="flex-start">
+          <ui.Svg
+            key="now-line"
+            source={nowSvg(svgWidth(W), nowInfo.text, nowMs)}
+            alt={nowMs === undefined ? nowInfo.text : `${nowInfo.text} · ${fmtElapsed(nowMs)}`}
+            width={svgWidth(W)}
+            height={DESKTOP_ROW_PX}
+          />
+          {canStopTurn && (
+            <Box position="absolute" top={0} right={0}>
+              {stopButton('turn', 'Stop turn', stopTurn)}
+            </Box>
+          )}
+        </Box>
       ) : (
         <Box key="hall-now" flexDirection="row" width={W}>
           <Box flexGrow={1}>
@@ -826,8 +902,9 @@ export const registerPane = (on: On) => {
             </Text>
           </Box>
           {nowMs !== undefined && <Client key="clock:now" module="./clients/agent-clock.tsx" props={{ ms: nowMs, at: now, color: T.aqua }} />}
-          {/* T3: the "Stop turn" Button goes in this reserved slot. */}
-          <Box key="stop-slot" width={STOP_COLS} />
+          <Box key="stop-slot" width={STOP_COLS} justifyContent="flex-end">
+            {canStopTurn ? stopButton('turn', 'Stop turn', stopTurn) : null}
+          </Box>
         </Box>
       )
 
@@ -849,16 +926,40 @@ export const registerPane = (on: On) => {
     )
 
     const newest = newestTurn(log)
+    const hasStrip = W >= STRIP_MIN_COLS
+    // The turn's mini timeline, from all its entries whatever the filter: a drawing on desktop, ━/─ runs elsewhere.
+    const strip = (hd: HallHead) => {
+      const alt = `turn ${hd.turn} timeline`
+      return (
+        <Box key={`strip:${hd.turn}`} marginX={1}>
+          {e.surface === 'desktop' && 'Svg' in ui ? (
+            <ui.Svg source={stripSvg(barSegments(hd.entries, STRIP_PX, now))} alt={alt} width={STRIP_PX} height={STRIP_H} />
+          ) : (
+            <Text>
+              {barRuns(barSegments(hd.entries, STRIP_CELLS, now), STRIP_CELLS).map(r =>
+                r.seg === undefined ? (
+                  <Text color={T.dim}>{'─'.repeat(r.n)}</Text>
+                ) : (
+                  <Text color={r.seg.color} dimColor={r.seg.running}>
+                    {'━'.repeat(r.n)}
+                  </Text>
+                ),
+              )}
+            </Text>
+          )}
+        </Box>
+      )
+    }
     const headNode = (hd: HallHead) => {
       const dur = fmtElapsed(hd.ms)
       return (
         <Box key={`head:${hd.turn}`} flexDirection="row" width={W}>
           <Box flexGrow={1}>
             <Button key={`turn:${hd.turn}`} plain onPress={() => update($, hallOpen, m => toggleTurn(m, hd.turn, newest))}>
-              <Text color={T.gold}>{trunc(headLabel(hd), W - dur.length - 1)}</Text>
+              <Text color={T.gold}>{trunc(headLabel(hd), W - dur.length - 1 - (hasStrip ? STRIP_CELLS + 2 : 0))}</Text>
             </Button>
           </Box>
-          {/* T3: the per-turn bar strip goes here, between the header's text and its time. */}
+          {hasStrip ? strip(hd) : null}
           <Text dimColor>{dur}</Text>
         </Box>
       )
@@ -870,7 +971,9 @@ export const registerPane = (on: On) => {
       const lead = r.sub ? '  ' : ''
       const status = x.status === undefined ? '' : `${GLYPH[x.status]} `
       const tagText = tag === undefined ? '' : `${trunc(tag, 10)} `
-      const room = W - lead.length - 2 - status.length - tagText.length - (r.dur ? r.dur.length + 1 : 0)
+      // A running agent's row ends in its Stop Button (a lone tool call has no stop of its own).
+      const stopId = x.kind === 'agent' && x.status === 'running' ? x.agentId : undefined
+      const room = W - lead.length - 2 - status.length - tagText.length - (r.dur ? r.dur.length + 1 : 0) - (stopId === undefined ? 0 : 6)
       return (
         <Box key={`row:${i}:${x.id}`} flexDirection="row" width={W}>
           <Text color={color}>{`${lead}${glyph} `}</Text>
@@ -880,6 +983,7 @@ export const registerPane = (on: On) => {
             <Text color={T.text}>{trunc(x.label, room)}</Text>
           </Box>
           {r.dur === '' ? null : <Text dimColor>{r.dur}</Text>}
+          {stopId === undefined ? null : <Box marginLeft={1}>{stopButton(`agent:${stopId}`, 'Stop', stopAgent(stopId))}</Box>}
         </Box>
       )
     }

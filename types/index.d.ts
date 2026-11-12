@@ -107,6 +107,8 @@ declare module 'claude-code' {
       hallFilter: HorusHallFilter
       /** Written by the pane only: turns the user folded by hand; n >= 0 opened turn n, n < 0 closed turn -n-1. */
       hallOpen: Shaped<number[]>
+      /** Written by the pane only: the Stop Button awaiting its confirming press ('turn', `agent:<agentId>`), '' none. */
+      armedStop: string
     }
   }
 }

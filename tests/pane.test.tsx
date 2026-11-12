@@ -3,6 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import type { HorusAgent, HorusLogEntry, HorusProgress } from '../types'
 import { fmtElapsed } from '../hooks/clients/agent-clock'
+import * as T from '../hooks/theme'
 import type { BackdropApi, Card } from '../hooks/pane'
 import {
   agentSvg,
@@ -226,7 +227,7 @@ function seed(on: On, values: Record<string, unknown>) {
     if (!(e.key in values)) return { value: { value: undefined, version: 0 } }
     return { value: { value: { shape, value: values[e.key] }, version: 1 } }
   })
-  mock.clock(on, { now: 66_000 })
+  return mock.clock(on, { now: 66_000 })
 }
 
 const SEEDED = {
@@ -514,4 +515,165 @@ test('Now line in the pane: running agents by tier, with their clock (phase and 
   ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(String((await ui.findAll({ type: 'Svg' })).at(-1)?.props.alt)).toBe('◈ 1 agent running · careful · 00:04')
   await ui.unmount()
+})
+
+const SURFACES = ['terminal', 'desktop'] as const
+const TALL = { ...PANE.props, scroll: { offset: 0, bodyRows: 80 } }
+
+test('turn headers carry a bar strip of all their entries whatever the filter, from 52 columns, on both surfaces', async ($, on) => {
+  seed(on, HALL)
+  for (const surface of SURFACES) {
+    const mount = (bodyColumns = 60) => $.ui.mount({ ...PANE, props: { ...TALL, bodyColumns }, surface })
+    const check = async () => {
+      const ui = await mount()
+      if (surface === 'terminal') {
+        const runs = (await ui.findAll({ type: 'Text', text: /^[━─]+$/ }))
+          .filter(t => t.props.color !== undefined)
+          .map(t => `${t.text}${t.props.color === T.dim ? '' : t.props.color}${t.props.dimColor ? '~' : ''}`)
+        // Turn 1 (1..3 ms): its tool, then the reply's one cell over it. Turn 2 (61..66 s): the running agent, its
+        // tool (done) and the main tool (running) over it.
+        expect(runs).toEqual(['──────', `━━━━━${T.aqua}`, `━${T.gold}`, '─', `━${T.violet}~`, `━━${T.aqua}`, `━━━━━━━${T.aqua}~`, `━${T.violet}~`])
+        expect(await ui.find({ type: 'Svg' })).toBeUndefined()
+      } else {
+        const strip = (await ui.findAll({ type: 'Svg' })).find(s => s.props.alt === 'turn 2 timeline')
+        const svg = String(strip?.props.source)
+        expect([strip?.props.width, strip?.props.height]).toEqual([96, 10])
+        expect(svg).toContain(`fill="${T.violet}"`) // the agent
+        expect(svg).toContain('class="live"') // running ones pulse
+        expect(svg).not.toContain(`fill="${T.err}"`) // nothing failed
+      }
+      expect((await ui.find({ key: 'turn:2' }))?.text).toBe('▾ turn 2 · 2 tools · 1 agent') // the label keeps its room
+      await ui.unmount()
+    }
+    await check()
+    // Under Main the agent's rows go, its segment stays.
+    let ui = await mount()
+    await ui.press({ key: 'filter:main' })
+    await ui.unmount()
+    await check()
+    ui = await mount()
+    await ui.press({ key: 'filter:all' })
+    await ui.unmount()
+    // Too narrow: no strip.
+    ui = await mount(40)
+    expect(await ui.find({ type: 'Text', text: /━/ })).toBeUndefined()
+    expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).endsWith('timeline'))).toBe(false)
+    await ui.unmount()
+  }
+})
+
+for (const [name, values] of [
+  ['idle with a turn id', { ...HALL, phase: 'idle', turnId: 't9' }],
+  ['running without a turn id', HALL],
+] as const) {
+  test(`no Stop turn while ${name}`, async ($, on) => {
+    seed(on, values)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ ...PANE, surface })
+      expect(await ui.find({ key: 'stop:turn' })).toBeUndefined()
+      await ui.unmount()
+    }
+  })
+}
+
+test('Stop turn: one press arms it (Sure?), a second aborts the running turn, and 3 s unpressed disarm it', async ($, on) => {
+  const clock = seed(on, { ...HALL, turnId: 't9' })
+  const aborted: string[] = []
+  on('turn.abort', (_, e) => {
+    aborted.push(e.turnId)
+    return { value: undefined }
+  })
+  for (const surface of SURFACES) {
+    aborted.length = 0
+    const mount = () => $.ui.mount({ ...PANE, surface })
+    const label = async () => {
+      const ui = await mount()
+      const text = (await ui.find({ key: 'stop:turn' }))?.text
+      await ui.unmount()
+      return text
+    }
+    const press = async () => {
+      const ui = await mount()
+      await ui.press({ key: 'stop:turn' })
+      await ui.unmount()
+    }
+    expect(await label()).toBe('Stop turn')
+    await press()
+    expect(await label()).toBe('Sure?')
+    expect(aborted).toEqual([])
+    await clock.advance(3000)
+    expect(await label()).toBe('Stop turn')
+    await press()
+    await press()
+    expect(aborted).toEqual(['t9'])
+    expect(await label()).toBe('Stop turn')
+  }
+})
+
+test('a Stop turn whose turn already ended toasts instead of failing', async ($, on) => {
+  seed(on, { ...HALL, turnId: 't9' })
+  on('turn.abort', () => ({ deny: 'turn t9 is not the running turn t10' }))
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    await ui.press({ key: 'stop:turn' })
+    await ui.press({ key: 'stop:turn' })
+    await ui.unmount()
+  }
+  expect(toasts).toEqual(['The Field of Reeds (Aaru): that turn is no longer running', 'The Field of Reeds (Aaru): that turn is no longer running'])
+})
+
+test('Stop on running agent rows only: two presses call TaskStop with its id, toasting the answer or the refusal', async ($, on) => {
+  const done = { id: 'agent:a2', at: 61_600, kind: 'agent', label: 'Done task', turn: 2, status: 'done', endedAt: 62_000, agentId: 'a2' }
+  seed(on, { ...HALL, sessionLog: [...HALL.sessionLog, done], turnId: 't9' })
+  const calls: string[] = []
+  const toasts: string[] = []
+  let refuse = false
+  on('tool.call', (_, e) => {
+    calls.push(`${e.tool}:${(e as unknown as { task_id?: string }).task_id}`)
+    return refuse ? { deny: 'not a background task' } : { result: { message: 'Successfully stopped task: a1', task_id: 'a1', task_type: 'local_agent' } }
+  })
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  for (const surface of SURFACES) {
+    calls.length = 0
+    toasts.length = 0
+    refuse = false
+    const mount = () => $.ui.mount({ ...PANE, props: TALL, surface })
+    const press = async (key: string) => {
+      const ui = await mount()
+      await ui.press({ key })
+      await ui.unmount()
+    }
+    const labels = async () => {
+      const ui = await mount()
+      const out = [(await ui.find({ key: 'stop:turn' }))?.text, (await ui.find({ key: 'stop:agent:a1' }))?.text, (await ui.find({ key: 'stop:agent:a2' }))?.text]
+      await ui.unmount()
+      return out
+    }
+    // Only the running agent's row has one (the finished agent and the tools have none).
+    expect(await labels()).toEqual(['Stop turn', 'Stop', undefined])
+    await press('stop:agent:a1')
+    expect(await labels()).toEqual(['Stop turn', 'Sure?', undefined])
+    // Another Stop re-arms that one; a press back on the agent arms it again, and only the next one stops it.
+    await press('stop:turn')
+    expect(await labels()).toEqual(['Sure?', 'Stop', undefined])
+    await press('stop:agent:a1')
+    expect(calls).toEqual([])
+    await press('stop:agent:a1')
+    expect(calls).toEqual(['TaskStop:a1'])
+    expect(toasts).toEqual(['The Field of Reeds (Aaru): Successfully stopped task: a1'])
+    refuse = true
+    await press('stop:agent:a1')
+    await press('stop:agent:a1')
+    expect(calls).toEqual(['TaskStop:a1', 'TaskStop:a1'])
+    expect(toasts.at(-1)).toBe('The Field of Reeds (Aaru): cannot stop that agent (not a background task)')
+    expect(await labels()).toEqual(['Stop turn', 'Stop', undefined])
+  }
 })

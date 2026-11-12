@@ -1,9 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
-import { GOD_H, GOD_TIERS, GOD_W, godGlyph, godName, godSvg } from '../hooks/gods'
+import { GOD_H, GOD_TIERS, GOD_W, godGlyph, godName, godSvg, POSE_H, POSE_W, poseSvg, slaveKey } from '../hooks/gods'
 
 // Tags open and close in order (the CSS is skipped), and every attribute holds only finite numbers, colours or names.
-const checkSvg = (svg: string): void => {
+const checkSvg = (svg: string, W = GOD_W, H = GOD_H): void => {
   const stack: string[] = []
   for (const [, close, name, self] of svg.replace(/<style>[\s\S]*?<\/style>/g, '').matchAll(/<(\/?)([a-z]+)[^>]*?(\/?)>/g)) {
     if (close) expect(stack.pop()).toBe(name)
@@ -19,8 +19,8 @@ const checkSvg = (svg: string): void => {
   }
   // Every box stays on the grid.
   for (const [, x, y, w, h] of svg.matchAll(/M(\d+) (\d+)h(\d+)v(\d+)/g)) {
-    expect(Number(x) + Number(w)).toBeLessThanOrEqual(GOD_W)
-    expect(Number(y) + Number(h)).toBeLessThanOrEqual(GOD_H)
+    expect(Number(x) + Number(w)).toBeLessThanOrEqual(W)
+    expect(Number(y) + Number(h)).toBeLessThanOrEqual(H)
   }
 }
 
@@ -89,4 +89,72 @@ test('dim greys every fill and keeps the shapes', async () => {
 test('placement: translate and scale are passed through, non-finite input falls back', async () => {
   expect(godSvg('fable', 10.5, -2, 1.5, false)).toContain('transform="translate(10.5,-2) scale(1.5)"')
   expect(godSvg('fable', NaN, Infinity, NaN, false)).toContain('transform="translate(0,0) scale(1)"')
+})
+
+// --- poses. One worker type per trade (the trade comes from the type's name).
+const TRADES = { hammer: 'general-purpose', scroll: 'Plan', basket: 'crab-organizer', torch: 'Explore', brush: 'crab-designer' }
+const POSE_KEYS = [...GOD_TIERS, 'nope', ...Object.values(TRADES).map(slaveKey)]
+const scopeOf = (svg: string) => /class="eoh-pose ([\w-]+)"/.exec(svg)?.[1] ?? ''
+
+// The CSS is scoped: every class rule and keyframe name starts with the pose's scope, every animation it runs is defined
+// right there, reduced motion stops it, and every group drawn hidden has a rule that shows it.
+const checkPoseCss = (svg: string): void => {
+  const scope = scopeOf(svg)
+  expect(scope).toMatch(/^eoh-(wk-[a-z]+|done)$/)
+  const css = /<style>([\s\S]*)<\/style>/.exec(svg)?.[1] ?? ''
+  const rules = css.replace(/@keyframes [\w-]+\{([^{}]*\{[^}]*\})*\}/g, '')
+  for (const [cls] of rules.matchAll(/\.[a-z][\w-]*/g)) expect(cls === `.${scope}` || cls.startsWith('.eoh-p-')).toBe(true)
+  const frames = [...css.matchAll(/@keyframes ([\w-]+)/g)].map(m => m[1] as string)
+  for (const name of frames) expect(name.startsWith(`${scope}-`)).toBe(true)
+  for (const [, decl] of css.matchAll(/animation:([^;}]+)/g))
+    for (const [name] of (decl as string).matchAll(/eoh-[\w-]+/g)) expect(frames).toContain(name)
+  expect(css).toContain(`@media (prefers-reduced-motion:reduce){.${scope} *{animation:none!important}}`)
+  for (const [, cls] of svg.matchAll(/<g class="eoh-p-([a-z]+)" opacity="0">/g)) expect(rules).toContain(`.eoh-p-${cls}{animation`)
+}
+
+test('every god, Set and trade has its own well-formed work and done pose under 5 KB', async () => {
+  const work = new Set<string>()
+  const scopes = new Set<string>()
+  for (const key of POSE_KEYS) {
+    const w = poseSvg(key, 3, 4, 3, 'work')
+    const d = poseSvg(key, 3, 4, 3, 'done')
+    for (const svg of [w, d]) {
+      checkSvg(svg, POSE_W, POSE_H)
+      checkPoseCss(svg)
+      expect(svg.length).toBeLessThan(5120)
+      expect(svg.startsWith('<g transform="translate(3,4) scale(3)" shape-rendering="crispEdges"><style>')).toBe(true)
+      expect(svg).not.toMatch(/eoh-walk|eoh-idle|eoh-god-/)
+    }
+    expect(d).not.toBe(w)
+    expect(scopeOf(d)).toBe('eoh-done')
+    work.add(w)
+    scopes.add(scopeOf(w))
+  }
+  expect(work.size).toBe(POSE_KEYS.length)
+  expect(scopes.size).toBe(POSE_KEYS.length)
+  for (const [trade, type] of Object.entries(TRADES)) expect(scopeOf(poseSvg(slaveKey(type), 0, 0, 1, 'work'))).toBe(`eoh-wk-${trade}`)
+})
+
+test('the pose box holds the props beyond the sprite; idle is the breathing god placed in the box', async () => {
+  const right = (svg: string) => Math.max(...[...svg.matchAll(/M(\d+) \d+h(\d+)/g)].map(m => Number(m[1]) + Number(m[2])))
+  expect(right(poseSvg('heavy', 0, 0, 1, 'work'))).toBeGreaterThan(8 + GOD_W) // the balance stands in front of Anubis
+  expect(poseSvg('fable', 0, 0, 1, 'work')).toMatch(/M\d+ [0-7]h/) // Ra's sun rises above the sprite box
+  for (const key of POSE_KEYS) {
+    expect(poseSvg(key, 2, 3, 2, 'idle')).toBe(godSvg(key, 18, 19, 2, false, false, true))
+    expect(poseSvg(key, 0, 0, 1, 'oops' as never)).toBe(poseSvg(key, 0, 0, 1, 'idle'))
+  }
+  expect(poseSvg('fable', NaN, Infinity, NaN, 'work')).toContain('transform="translate(0,0) scale(1)"')
+  expect(poseSvg('fable', NaN, Infinity, NaN, 'idle')).toContain('transform="translate(8,8) scale(1)"')
+})
+
+test('unknown keys pose safely: tiers as Set, any worker type as a trade', async () => {
+  for (const key of ['', 'explore', 'constructor', '__proto__', 'toString']) {
+    expect(poseSvg(key, 0, 0, 1, 'work')).toBe(poseSvg('nope', 0, 0, 1, 'work'))
+    expect(poseSvg(key, 0, 0, 1, 'done')).toBe(poseSvg('nope', 0, 0, 1, 'done'))
+  }
+  for (const type of ['', 'constructor', '__proto__', 'some-new-agent']) {
+    const svg = poseSvg(slaveKey(type), 0, 0, 1, 'work')
+    checkSvg(svg, POSE_W, POSE_H)
+    expect(scopeOf(svg)).toBe('eoh-wk-hammer')
+  }
 })

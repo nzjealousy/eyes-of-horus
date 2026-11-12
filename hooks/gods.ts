@@ -1,7 +1,7 @@
 // Pixel-art Egyptian gods, one per savvy-flow tier: a 24x32 grid emitted as an SVG fragment.
 // Every god faces right in the Egyptian striding pose: animal head, broad collar, kilt, a staff
 // in the front hand and an ankh (or sistrum) in the back one. Pure strings, no engine imports.
-import { aqua, gold, goldBright, goldDim, orbCore, purple, text as linen, violet } from './theme'
+import { aqua, err, gold, goldBright, goldDim, ok, orbCore, purple, text as linen, violet } from './theme'
 
 export const GOD_TIERS = ['fable', 'heavy', 'careful', 'medium', 'light'] as const
 export const GOD_W = 24
@@ -17,16 +17,18 @@ export const godGlyph = (tier: string): string => GLYPHS.get(tier) ?? '𓃩'
 
 // Sprite palette. Theme colours where they exist; the neutrals (skin, linen shade, obsidian, feathers) are
 // sprite pixel data chosen to stand out on the dark panel. H wig, X collar band, M eye marking, B beak.
+// R (heart, fruit) and L (leaves) only appear in the work poses.
 const OBS = '#2a2438'
 const PAL: Record<string, string> = {
   G: gold, Y: goldBright, D: goldDim, P: purple, V: violet, A: aqua, Q: orbCore, W: linen,
   w: '#b8ad94', S: '#c47a48', s: '#8f5230', K: OBS, k: '#5a4d7e', F: '#8a6038', f: '#eadcbc', E: '#120e18',
-  H: purple, X: purple, M: '#120e18', B: goldBright,
+  H: purple, X: purple, M: '#120e18', B: goldBright, R: err, L: ok,
 }
 
-// A part is [group, top row, rows]; rows are 24 columns wide and '.' is transparent. Groups: `la`/`lb` the two
-// leg poses, `bd` the body (default), `pr` the prop (rides the body and bobs on its own), `gl` a glint that pulses.
-type Part = [cls: string, y: number, rows: string[]]
+// A part is [group, top row, rows, left column]; rows are 24 columns wide and '.' is transparent. Groups: `la`/`lb`
+// the two leg poses, `bd` the body (default), `pr` the prop (rides the body and bobs on its own), `gl` a glint that
+// pulses. The left column (default 0) and a negative top only matter to the poses, whose box is wider than the sprite.
+type Part = [cls: string, y: number, rows: string[], x?: number]
 
 const LEGS_STRIDE: Part = ['la', 25, [
   '........SS...SS',
@@ -95,24 +97,28 @@ interface God {
   parts: Part[]
 }
 
+// Ra's sun disc and its uraeus, and Bastet's sistrum: the work poses move them on their own.
+const RA_DISC: Part = ['bd', 0, [
+  '.........GGGG',
+  '........GYYGGG',
+  '.......GYYGGGGG',
+  '.......GYGGGGGG',
+  '.......GGGGGGGG',
+  '........GGGGGG',
+]]
+const RA_URAEUS: Part = ['gl', 3, ['...............A', '...............AA', '...............A']]
+const BASTET_SISTRUM: Part = ['pr', 9, [
+  '...................GGG',
+  '...................G.G',
+  '...................GGG',
+  ...Array<string>(7).fill('....................G'),
+]]
+
 const GODS: Record<string, God> = {
   // Ra: gold falcon under a glowing sun disc with the aqua uraeus, purple wig.
   fable: {
     pal: { F: OBS, f: gold, M: OBS, E: goldBright, B: linen },
-    parts: [
-      ['bd', 0, [
-        '.........GGGG',
-        '........GYYGGG',
-        '.......GYYGGGGG',
-        '.......GYGGGGGG',
-        '.......GGGGGGGG',
-        '........GGGGGG',
-      ]],
-      FALCON,
-      ['gl', 3, ['...............A', '...............AA', '...............A']],
-      WAS,
-      ANKH,
-    ],
+    parts: [RA_DISC, FALCON, RA_URAEUS, WAS, ANKH],
   },
   // Anubis: slender obsidian jackal, tall ears lined in gold, long snout, gold eye, wig striped gold.
   heavy: {
@@ -209,18 +215,7 @@ const GODS: Record<string, God> = {
         '........AAAAAAA',
         '.......AAAAAAAAA',
       ]],
-      ['pr', 9, [
-        '...................GGG',
-        '...................G.G',
-        '...................GGG',
-        '....................G',
-        '....................G',
-        '....................G',
-        '....................G',
-        '....................G',
-        '....................G',
-        '....................G',
-      ]],
+      BASTET_SISTRUM,
     ],
   },
 }
@@ -299,16 +294,38 @@ const greyOf = (hex: string): string => {
   return `#${[v, v, v + 10].map(c => Math.min(255, c).toString(16).padStart(2, '0')).join('')}`
 }
 
+// Each group's pixels, keyed y * cols + x in a cols x rowsN grid whose (0, 0) is sprite cell (-ox, -oy); a group
+// paints in the order it first appears. '_' erases what the group drew there before (Bastet's dress over the kilt).
+const pixelsOf = (parts: (Part | null)[], pal: Record<string, string>, cols: number, rowsN: number, ox = 0, oy = 0) => {
+  const groups = new Map<string, Map<number, string>>()
+  for (const part of parts) {
+    if (!part) continue
+    const [cls, top, rows, left = 0] = part
+    if (!groups.has(cls)) groups.set(cls, new Map())
+    const px = groups.get(cls) as Map<number, string>
+    rows.forEach((row, dy) =>
+      [...row].forEach((ch, dx) => {
+        const gx = ox + left + dx
+        const gy = oy + top + dy
+        if (gx < 0 || gx >= cols || gy < 0 || gy >= rowsN) return
+        if (ch === '_') px.delete(gy * cols + gx)
+        else if (pal[ch]) px.set(gy * cols + gx, pal[ch])
+      }),
+    )
+  }
+  return groups
+}
+
 // One <path> per colour per group: runs of equal pixels in a row, stacked with the same run in the rows below,
 // each become one `M x y h w v h h-w z` box (this keeps a god under 3 KB).
-const paths = (pixels: Map<number, string>, isDim: boolean): string => {
+const paths = (pixels: Map<number, string>, isDim: boolean, cols = GOD_W, rowsN = GOD_H): string => {
   const boxes = new Map<string, [x: number, y: number, w: number, h: number]>()
   const done: [string, number, number, number, number][] = []
-  for (let y = 0; y < GOD_H; y++) {
-    for (let x = 0; x < GOD_W; ) {
-      const c = pixels.get(y * GOD_W + x)
+  for (let y = 0; y < rowsN; y++) {
+    for (let x = 0; x < cols; ) {
+      const c = pixels.get(y * cols + x)
       let w = 1
-      while (c && x + w < GOD_W && pixels.get(y * GOD_W + x + w) === c) w++
+      while (c && x + w < cols && pixels.get(y * cols + x + w) === c) w++
       const key = `${c}|${x}|${w}`
       const box = boxes.get(key)
       if (c && box && box[1] + box[3] === y) box[3]++
@@ -348,24 +365,12 @@ const num = (v: number, fallback: number): number => (Number.isFinite(v) ? Math.
  * (x, y) and each unit `scale` px, so it covers x .. x + GOD_W * scale and y .. y + GOD_H * scale. `isWalking` adds the
  * second leg pose and the scoped animation; `isDim` greys every fill (finished/planned). Unknown tiers draw Set.
  */
+const godOf = (key: string): God =>
+  Object.hasOwn(GODS, key) ? (GODS[key] as God) : key.startsWith('slave:') ? slaveOf(key.slice(6)) : SET
+
 export const godSvg = (tier: string, x: number, y: number, scale: number, isWalking: boolean, isDim = false, isIdle = false): string => {
-  const god = Object.hasOwn(GODS, tier) ? (GODS[tier] as God) : tier.startsWith('slave:') ? slaveOf(tier.slice(6)) : SET
-  const pal = { ...PAL, ...god.pal }
-  const groups = new Map<string, Map<number, string>>()
-  const parts = [isWalking ? LEGS_PASS : null, LEGS_STRIDE, TORSO, ...god.parts]
-  for (const part of parts) {
-    if (!part) continue
-    const [cls, top, rows] = part
-    if (!groups.has(cls)) groups.set(cls, new Map())
-    const px = groups.get(cls) as Map<number, string>
-    rows.forEach((row, dy) =>
-      [...row].forEach((ch, dx) => {
-        const at = (top + dy) * GOD_W + dx
-        if (ch === '_') px.delete(at) // a costume erases the part it replaces (Bastet's dress over the kilt)
-        else if (pal[ch] && dx < GOD_W && top + dy < GOD_H) px.set(at, pal[ch])
-      }),
-    )
-  }
+  const god = godOf(tier)
+  const groups = pixelsOf([isWalking ? LEGS_PASS : null, LEGS_STRIDE, TORSO, ...god.parts], { ...PAL, ...god.pal }, GOD_W, GOD_H)
   const group = (cls: string, inner = '', extra = ''): string => {
     const px = groups.get(cls)
     return px || inner ? `<g class="eoh-god-${cls}"${extra}>${px ? paths(px, isDim) : ''}${inner}</g>` : ''
@@ -374,4 +379,378 @@ export const godSvg = (tier: string, x: number, y: number, scale: number, isWalk
   const body = group('bd', group('pr') + group('gl'))
   const motion = isWalking ? ' eoh-walk' : isIdle ? ' eoh-idle' : ''
   return `<g transform="translate(${num(x, 0)},${num(y, 0)}) scale(${num(scale, 1)})" shape-rendering="crispEdges">${isWalking ? WALK_CSS : isIdle ? IDLE_CSS : ''}<g class="eoh-god${motion}">${legs}${body}</g></g>`
+}
+
+// --- Poses: the Temple view shows each agent at work in its own chamber, and celebrating once it is done. A pose box
+// is POSE_W x POSE_H grid units with the 24x32 sprite at cell (8, 8), so its feet stand on the box's bottom edge and
+// props have 8 columns on its left, 12 on its right and 8 rows above it. Part rows are still in sprite cells.
+export const POSE_W = 44
+export const POSE_H = 40
+const OX = 8
+const OY = 8
+export type PoseName = 'work' | 'done' | 'idle'
+
+// A pose: its parts (paint order is the order a group first appears), the groups drawn hidden (alternate frames the
+// animation reveals; reduced motion keeps the default frame) and its CSS. In the CSS `$x` is the pose's group `x`
+// and `~` starts a keyframe name; both come out under the pose's own scope class so poses never clash on one page.
+// Periods divide one second, like the walk, so a once-a-second redraw restarts them in phase.
+interface Pose {
+  scope: string
+  parts: Part[]
+  hide?: string[]
+  css: string
+}
+const style = (scope: string, css: string): string =>
+  `<style>${css.replaceAll('$', `.${scope} .eoh-p-`).replaceAll('~', `${scope}-`)}@media (prefers-reduced-motion:reduce){.${scope} *{animation:none!important}}</style>`
+/** `part` moved to group `cls`, `dy` rows lower. */
+const regroup = (part: Part, cls: string, dy = 0): Part => [cls, part[1] + dy, part[2], part[3]]
+// Two-frame toggle: shown for the first half of the period (or, delayed by half a period, the second half).
+const TOGGLE = '@keyframes ~t{0%{opacity:1}50%{opacity:0}}'
+
+// Props held in the hands; the poses that raise their arms put them down.
+const HELD = new Set<Part>([WAS, ANKH, BASTET_SISTRUM, TORCH_HANDLE, ...Object.values(TOOLS)])
+// TORSO's arms below the shoulders, erased for poses that draw their own.
+const NO_BACK_ARM: Part = ['bd', 17, Array<string>(5).fill('.....__')]
+const NO_FRONT_ARM: Part = ['bd', 17, ['................___', '.................____', '...................___']]
+// The grip around the staff, closed into a fist.
+const FIST: Part = ['bd', 19, ['....................S']]
+// Both arms raised in the ka pose: elbows out at the shoulders, forearms up beside the head.
+const ARMS_UP: Part = ['ar', 10, [
+  '..ss................ss',
+  ...Array<string>(5).fill('..SS................SS'),
+  '..SSS.............SSSS',
+]]
+
+const WORK: Record<string, Pose> = {
+  // Ra lifts the sun: both arms reach high and the disc rises off his head in a pulsing halo with twinkling rays;
+  // then arms and disc sink 2 rows and rise again. The halo (translucent, behind everything) is 2 cells wider.
+  fable: {
+    scope: 'eoh-wk-ra',
+    parts: [
+      ['dg', -6, [
+        '.........YYYY',
+        '.......YYYYYYYY',
+        '......YYYYYYYYYY',
+        ...Array<string>(4).fill('.....YYYYYYYYYYYY'),
+        '......YYYYYYYYYY',
+        '.......YYYYYYYY',
+        '.........YYYY',
+      ]],
+      LEGS_STRIDE, TORSO, NO_BACK_ARM, NO_FRONT_ARM, FALCON,
+      regroup(RA_DISC, 'dk', -4), regroup(RA_URAEUS, 'dk', -4),
+      ['ra', -8, ['..........YY', '', '', '', '', '', '', '..YY..............YY']],
+      ['rb', -7, ['...Y..............Y', '....Y............Y']],
+      ['ah', 7, [
+        '..ss................ss',
+        ...Array<string>(5).fill('..SS................SS'),
+        '..SSS..............SSS',
+        '...SSS............SSS',
+        '....SSS..........SSS',
+      ]],
+      regroup(ARMS_UP, 'al'),
+    ],
+    hide: ['rb', 'al'],
+    css:
+      '$ah{animation:~t 1s steps(1) infinite}$al{animation:~t 1s steps(1) -.5s infinite}$dk{animation:~l 1s steps(1) infinite}' +
+      '$dg{opacity:.45;animation:~l 1s steps(1) infinite,~g .5s ease-in-out infinite}$ra{animation:~l 1s steps(1) infinite,~t .5s steps(1) infinite}' +
+      '$rb{animation:~l 1s steps(1) infinite,~t .5s steps(1) -.25s infinite}' +
+      `${TOGGLE}@keyframes ~l{50%{transform:translateY(2px)}}@keyframes ~g{50%{opacity:.15}}`,
+  },
+  // Anubis weighs the heart: a standing balance in front of him, the heart pan and the feather pan see-sawing while
+  // his fist steadies the heart's pan.
+  heavy: {
+    scope: 'eoh-wk-anubis',
+    parts: [
+      LEGS_STRIDE, TORSO, FIST, ...(GODS.heavy as God).parts.filter(p => p !== WAS),
+      ['st', 12, [
+        '............................Y',
+        '............................G',
+        '',
+        ...Array<string>(15).fill('............................G'),
+        '...........................GGG',
+        '..........................DDDDD',
+      ]],
+      // Heart down, feather up.
+      ['pa', 13, [
+        '...............................GGG',
+        '..........................GGGGG.D',
+        '.......................GGG.....DWD',
+        '........................D.....D.W.D',
+        '.......................D.D....D.WwD',
+        '......................DR.RD...GGGGG',
+        '......................DRRRD....GGG',
+        '......................GGGGG',
+        '.......................GGG',
+      ]],
+      // Heart up, feather down.
+      ['pb', 13, [
+        '.......................GGG',
+        '........................D.GGGGG',
+        '.......................D.D.....GGG',
+        '......................DR.RD.....D',
+        '......................DRRRD....DWD',
+        '......................GGGGG...D.W.D',
+        '.......................GGG....D.WwD',
+        '..............................GGGGG',
+        '...............................GGG',
+      ]],
+    ],
+    hide: ['pb'],
+    css: `$pa{animation:~t 1s steps(1) infinite}$pb{animation:~t 1s steps(1) -.5s infinite}$gl{animation:~g 1s ease-in-out infinite}${TOGGLE}@keyframes ~g{50%{opacity:.45}}`,
+  },
+  // Horus keeps watch: the falcon head scans forward and back with a gleaming eye while the back wing beats.
+  careful: {
+    scope: 'eoh-wk-horus',
+    parts: [
+      LEGS_STRIDE, TORSO, NO_BACK_ARM, ...(GODS.careful as God).parts.filter(p => !HELD.has(p)).map(p => regroup(p, 'hd')), WAS,
+      ['ey', 8, ['............Q']],
+      // The back wing (from 8 columns left of the sprite): aqua coverts on the leading edge, cream feather tips on the
+      // trailing one. Raised and spread, then swept down (the same wing mirrored about the shoulder row).
+      ['wa', 7, [
+        '.ff',
+        'fFFAA',
+        'fFFFFAA',
+        '.fFFFFFAA',
+        '.ffFFFFFFAA',
+        '..ffFFFFFFFAA',
+        '...ffFFFFFFFA',
+        '....f.fFFFFFA',
+        '.........FFFF',
+      ], -8],
+      ['wb', 15, [
+        '.........FFFF',
+        '....f.fFFFFFA',
+        '...ffFFFFFFFA',
+        '..ffFFFFFFFAA',
+        '.ffFFFFFFAA',
+        '.fFFFFFAA',
+        'fFFFFAA',
+        'fFFAA',
+        '.ff',
+      ], -8],
+    ],
+    hide: ['wb'],
+    css:
+      '$hd{animation:~s 1s steps(1) infinite}$ey{animation:~s 1s steps(1) infinite,~t .5s steps(1) infinite}' +
+      '$wa{animation:~t .5s steps(1) infinite}$wb{animation:~t .5s steps(1) -.25s infinite}' +
+      `${TOGGLE}@keyframes ~s{25%{transform:translateX(1px)}50%{transform:none}75%{transform:translateX(-1px)}}`,
+  },
+  // Thoth writes: a papyrus hangs before him and unrolls a line at a time while his reed scratches and his head dips.
+  medium: {
+    scope: 'eoh-wk-thoth',
+    parts: [
+      LEGS_STRIDE, TORSO, FIST, ...(GODS.medium as God).parts.filter(p => !HELD.has(p)).map(p => regroup(p, 'hd')), ANKH,
+      ['rd', 20, ['......................f', '.......................f', '........................E']],
+      // Top rod and the first line; the next three lines unroll below it, the bottom rod moving down with them.
+      ['sh', 13, ['.......................GDDDDDDDDG', '........................ffffffff', '........................fEEfEEEf', '........................ffffffff']],
+      ['sb', 17, ['........................ffffffff', '........................fEfEEfEf', '........................ffffffff']],
+      ['sc', 20, ['........................ffffffff', '........................fEEEfEEf', '........................ffffffff']],
+      ['sd', 23, ['........................ffffffff', '........................fEfEEEff', '........................ffffffff']],
+      ['rl', 26, ['.......................GDDDDDDDDG']],
+    ],
+    css:
+      '$hd{animation:~d .5s steps(1) infinite}$rd{animation:~w .25s steps(1) infinite}$rl{animation:~r 1s steps(1) infinite}' +
+      '$sb{animation:~b 1s steps(1) infinite}$sc{animation:~c 1s steps(1) infinite}$sd{animation:~e 1s steps(1) infinite}' +
+      '@keyframes ~d{50%{transform:translate(1px,1px)}}@keyframes ~w{50%{transform:translate(1px,-1px)}}' +
+      '@keyframes ~b{0%{opacity:0}25%{opacity:1}}@keyframes ~c{0%,25%{opacity:0}50%{opacity:1}}@keyframes ~e{0%,50%{opacity:0}75%{opacity:1}}' +
+      '@keyframes ~r{0%{transform:translateY(-9px)}25%{transform:translateY(-6px)}50%{transform:translateY(-3px)}75%{transform:none}}',
+  },
+  // Bastet plays: the sistrum rattles (its jingle bar flashing) and three sound arcs ripple outward from it.
+  light: {
+    scope: 'eoh-wk-bastet',
+    parts: [
+      LEGS_STRIDE, TORSO, ...(GODS.light as God).parts.filter(p => !HELD.has(p)),
+      regroup(BASTET_SISTRUM, 'si'), ['si', 10, ['....................Y']],
+      ['wa', 9, ['.......................A', '........................A', '.......................A']],
+      ['wb', 8, ['.........................A', '..........................A', '..........................A', '..........................A', '.........................A']],
+      ['wc', 7, [
+        '...........................A',
+        '............................A',
+        ...Array<string>(3).fill('.............................A'),
+        '............................A',
+        '...........................A',
+      ]],
+    ],
+    css: `$si{animation:~s .25s steps(1) infinite}$wa,$wb,$wc{animation:~t 1s steps(1) infinite}$wb{animation-delay:-.75s}$wc{animation-delay:-.5s}${TOGGLE}@keyframes ~s{50%{transform:translate(1px,-1px)}}`,
+  },
+}
+// Set, for an unknown tier: works his staff up and down against a bobbing body.
+const SET_WORK: Pose = {
+  scope: 'eoh-wk-set',
+  parts: [LEGS_STRIDE, TORSO, ...SET.parts],
+  css: '$pr{animation:~h .5s steps(1) infinite}$bd{animation:~h .5s steps(1) -.25s infinite}@keyframes ~h{50%{transform:translateY(-1px)}}',
+}
+
+// Each worker trade (from `toolOf`); the slave's head and cloth colour stay its own.
+const TRADE_WORK: Record<string, Pose> = {
+  // The smith raises a bronze hammer, then strikes the anvil in a burst of sparks.
+  hammer: {
+    scope: 'eoh-wk-hammer',
+    parts: [
+      LEGS_STRIDE, TORSO, NO_FRONT_ARM, SLAVE_HEAD,
+      ['an', 24, [
+        '.....................wwwwwwwww',
+        '......................kkkkkkkk',
+        ...Array<string>(3).fill('........................kkkk'),
+        '.......................kkkkkk',
+        '......................kkkkkkkk',
+        '......................kkkkkkkk',
+      ]],
+      ['ha', 5, [
+        '...................DDD',
+        '...................DDD',
+        ...Array<string>(5).fill('....................F'),
+        '...................SSS',
+        '..................SS',
+        '.................SS',
+        '................SS',
+      ]],
+      ['hb', 17, [
+        '................SSS',
+        '.................SSSS',
+        '...................SSS',
+        '......................F',
+        '.......................F',
+        '......................DDDD',
+        '......................DDDD',
+      ]],
+      ['sk', 19, ['...........................Y', '..........................Q..Y', '............................Y']],
+    ],
+    hide: ['ha'],
+    css: `$ha{animation:~t 1s steps(1) infinite}$hb,$sk{animation:~t 1s steps(1) -.5s infinite}${TOGGLE}`,
+  },
+  // The scribe holds an open scroll, nodding as each line of marks appears.
+  scroll: {
+    scope: 'eoh-wk-scroll',
+    parts: [
+      LEGS_STRIDE, TORSO, regroup(SLAVE_HEAD, 'hd'),
+      ['os', 13, [
+        '....................F.......F',
+        ...Array<string>(8).fill('....................wfffffffw'),
+        '....................F.......F',
+      ]],
+      ['ma', 15, ['......................EE.EE']],
+      ['mb', 17, ['......................E.EEE']],
+      ['mc', 19, ['......................EEE.E']],
+    ],
+    css:
+      '$hd{animation:~d 1s steps(1) infinite}$ma{animation:~b 1s steps(1) infinite}$mb{animation:~c 1s steps(1) infinite}$mc{animation:~e 1s steps(1) infinite}' +
+      '@keyframes ~d{50%{transform:translateY(1px)}}' +
+      '@keyframes ~b{0%{opacity:0}25%{opacity:1}}@keyframes ~c{0%,25%{opacity:0}50%{opacity:1}}@keyframes ~e{0%,50%{opacity:0}75%{opacity:1}}',
+  },
+  // The porter treads in place with a basket of bread and fruit on his head, the load bouncing a beat behind him.
+  basket: {
+    scope: 'eoh-wk-basket',
+    parts: [
+      LEGS_PASS, LEGS_STRIDE, TORSO, FIST, SLAVE_HEAD, regroup(TOOLS.basket as Part, 'bk'),
+      ['bk', -1, ['..........Y.L', '.........RYYLR']],
+    ],
+    hide: ['lb'],
+    css: '$la,$lb{animation:~t .5s steps(1) infinite}$lb{animation-delay:-.25s}$bd{animation:~b .5s steps(1) infinite}$bk{animation:~b .5s steps(1) -.25s infinite}' +
+      `${TOGGLE}@keyframes ~b{50%{transform:translateY(-1px)}}`,
+  },
+  // The scout sweeps the torch from beside him out to arm's length and back, its flame tip flickering.
+  torch: {
+    scope: 'eoh-wk-torch',
+    parts: [
+      LEGS_STRIDE, TORSO, NO_FRONT_ARM, SLAVE_HEAD,
+      ['ta', 8, [
+        '...................YQY',
+        '...................YQY',
+        '...................GYG',
+        '....................G',
+        ...Array<string>(5).fill('....................F'),
+        '................SSS.F',
+        '.................SSSF',
+        '...................SFS',
+      ]],
+      ['xa', 7, ['....................Y']],
+      ['tb', 5, [
+        '.......................YQY',
+        '.......................YQY',
+        '.......................GYG',
+        '........................G',
+        ...Array<string>(6).fill('........................F'),
+        '.....................SSSFS',
+        '..................SSSS..F',
+      ]],
+      ['xb', 4, ['........................Y']],
+    ],
+    hide: ['tb', 'xb'],
+    css:
+      '$ta{animation:~t 1s steps(1) infinite}$tb{animation:~t 1s steps(1) -.5s infinite}' +
+      '$xa{animation:~t 1s steps(1) infinite,~f .25s steps(1) infinite}$xb{animation:~t 1s steps(1) -.5s infinite,~f .25s steps(1) infinite}' +
+      `${TOGGLE}@keyframes ~f{50%{transform:translateX(1px)}}`,
+  },
+  // The painter strokes a limestone panel high and low; a purple, then an aqua stroke appears.
+  brush: {
+    scope: 'eoh-wk-brush',
+    parts: [
+      LEGS_STRIDE, TORSO, NO_FRONT_ARM, SLAVE_HEAD,
+      ['pn', 10, ['........................wwwwwwww', ...Array<string>(21).fill('........................wffffffw')]],
+      ['ba', 14, ['.....................SSFFP', '...................SS', '..................SS']],
+      ['bb', 17, ['................SSSS', '...................SSS', '.....................SSFFP']],
+      ['ka', 14, ['..........................PPPP']],
+      ['kb', 19, ['..........................AAAA']],
+    ],
+    hide: ['bb'],
+    css:
+      '$ba{animation:~t .5s steps(1) infinite}$bb{animation:~t .5s steps(1) -.25s infinite}$ka{animation:~c 1s steps(1) infinite}$kb{animation:~e 1s steps(1) infinite}' +
+      `${TOGGLE}@keyframes ~c{0%{opacity:0}50%{opacity:1}}@keyframes ~e{0%{opacity:0}75%{opacity:1}}`,
+  },
+}
+
+// Done: every god and worker drops what it held, throws both arms up and hops before a pulsing sun-disc glow while
+// four sparkles rise around it. It loops gently (a once-a-second redraw would replay a one-shot anyway).
+const doneOf = (god: God): Pose => ({
+  scope: 'eoh-done',
+  parts: [
+    ['gw', -2, [
+      '..........YYYY',
+      '........YYYYYYYY',
+      '......YYYYYYYYYYYY',
+      '.....YYYYYYYYYYYYYY',
+      '....YYYYYYYYYYYYYYYY',
+      ...Array<string>(2).fill('...YYYYYYYYYYYYYYYYYY'),
+      ...Array<string>(7).fill('..YYYYYYYYYYYYYYYYYYYY'),
+      ...Array<string>(2).fill('...YYYYYYYYYYYYYYYYYY'),
+      '....YYYYYYYYYYYYYYYY',
+      '.....YYYYYYYYYYYYYY',
+      '......YYYYYYYYYYYY',
+      '........YYYYYYYY',
+      '..........YYYY',
+    ]],
+    LEGS_STRIDE, TORSO, NO_BACK_ARM, NO_FRONT_ARM, ...god.parts.filter(p => !HELD.has(p)), ARMS_UP,
+    ['sa', 8, ['.Y.', 'YQY', '.Y.'], -1],
+    ['sb', 6, ['.Y.', 'YQY', '.Y.'], 22],
+    ['sc', 0, ['.Y.', 'YQY', '.Y.'], 4],
+    ['sd', 2, ['.Y.', 'YQY', '.Y.'], 17],
+  ],
+  css:
+    '$gw{opacity:.35;animation:~g 1s ease-in-out infinite}$la,$bd,$gl,$ar{animation:~h 1s steps(1) infinite}' +
+    '$sa,$sb,$sc,$sd{animation:~r 1s linear infinite}$sb{animation-delay:-.25s}$sc{animation-delay:-.5s}$sd{animation-delay:-.75s}' +
+    '@keyframes ~g{50%{opacity:.15}}@keyframes ~h{50%{transform:translateY(-1px)}}@keyframes ~r{to{transform:translateY(-6px);opacity:0}}',
+})
+
+const workOf = (key: string): Pose =>
+  Object.hasOwn(WORK, key)
+    ? (WORK[key] as Pose)
+    : key.startsWith('slave:')
+      ? (TRADE_WORK[toolOf(key.slice(6))] as Pose)
+      : SET_WORK
+
+/**
+ * SVG fragment (no <svg> wrapper) for `key` (a tier, or `slaveKey(type)`) in a pose: 'work' (its looping work motion
+ * with its prop), 'done' (the celebration) or 'idle' (godSvg's breathing). The pose box is POSE_W x POSE_H grid units,
+ * its top-left corner at (x, y) and each unit `scale` px; the sprite sits in it at (8, 8), feet on the bottom edge.
+ * Unknown tiers draw Set; any worker type draws a trade (hammer by default).
+ */
+export const poseSvg = (key: string, x: number, y: number, scale: number, pose: PoseName): string => {
+  const [px, py, s] = [num(x, 0), num(y, 0), num(scale, 1)]
+  if (pose !== 'work' && pose !== 'done') return godSvg(key, px + OX * s, py + OY * s, s, false, false, true)
+  const god = godOf(key)
+  const p = pose === 'done' ? doneOf(god) : workOf(key)
+  const groups = pixelsOf(p.parts, { ...PAL, ...god.pal }, POSE_W, POSE_H, OX, OY)
+  const body = [...groups].map(([cls, g]) => `<g class="eoh-p-${cls}"${p.hide?.includes(cls) ? ' opacity="0"' : ''}>${paths(g, false, POSE_W, POSE_H)}</g>`)
+  return `<g transform="translate(${px},${py}) scale(${s})" shape-rendering="crispEdges">${style(p.scope, p.css)}<g class="eoh-pose ${p.scope}">${body.join('')}</g></g>`
 }

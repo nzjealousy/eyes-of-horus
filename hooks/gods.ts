@@ -1,6 +1,7 @@
 // Pixel-art Egyptian gods, one per savvy-flow tier: a 24x32 grid emitted as an SVG fragment.
 // Every god faces right in the Egyptian striding pose: animal head, broad collar, kilt, a staff
 // in the front hand and an ankh (or sistrum) in the back one. Pure strings, no engine imports.
+import { motionCss } from './motion'
 import { aqua, err, gold, goldBright, goldDim, ok, orbCore, purple, text as linen, violet } from './theme'
 
 export const GOD_TIERS = ['fable', 'heavy', 'careful', 'medium', 'light'] as const
@@ -355,18 +356,16 @@ const paths = (pixels: Map<number, string>, isDim: boolean, cols = GOD_W, rowsN 
 
 // Periods divide one second so a once-a-second redraw restarts them in phase. Legs swap between the stride and
 // the passing pose; the body rises on the passing step and the prop lifts with it; glints pulse.
-// The passing pose is drawn with opacity 0, so without animation (reduced motion) the god just stands in the stride.
+// The passing pose is drawn with opacity 0, so with motion off (/horus-motion) the god just stands in the stride.
 const WALK_CSS = `<style>
 .eoh-walk .eoh-god-la,.eoh-walk .eoh-god-lb{animation:eoh-god-step .5s steps(1) infinite}.eoh-walk .eoh-god-lb{animation-delay:-.25s}
 .eoh-walk .eoh-god-bd,.eoh-walk .eoh-god-pr{animation:eoh-god-bob .5s steps(1) infinite}.eoh-walk .eoh-god-gl{animation:eoh-god-glow 1s ease-in-out infinite}
 @keyframes eoh-god-step{0%{opacity:1}50%{opacity:0}}@keyframes eoh-god-bob{50%{transform:translateY(-1px)}}@keyframes eoh-god-glow{50%{opacity:.45}}
-@media (prefers-reduced-motion:reduce){.eoh-walk *{animation:none!important}}
 </style>`
 // Waiting: the body breathes (a 1 px rise every 2 s), the prop sways with it, glints pulse slowly.
 const IDLE_CSS = `<style>
 .eoh-idle .eoh-god-bd,.eoh-idle .eoh-god-pr{animation:eoh-god-breathe 2s steps(1) infinite}.eoh-idle .eoh-god-gl{animation:eoh-god-glow 2s ease-in-out infinite}
 @keyframes eoh-god-breathe{50%{transform:translateY(-1px)}}@keyframes eoh-god-glow{50%{opacity:.45}}
-@media (prefers-reduced-motion:reduce){.eoh-idle *{animation:none!important}}
 </style>`
 
 const num = (v: number, fallback: number): number => (Number.isFinite(v) ? Math.round(v * 1000) / 1000 : fallback)
@@ -383,13 +382,13 @@ const shift = (css: string, d: number): string =>
     .replace(/( -?[\d.]+s)? infinite/g, (_, t = '0') => ` ${num(parseFloat(t) - d, 0)}s infinite`)
     .replace(/animation-delay:(-?[\d.]+)s/g, (_, t) => `animation-delay:${num(Number(t) - d, 0)}s`)
 // A seeded idle god breathes from its own phase under its own scope class, and every 4 to 8 s (by seed) it blinks:
-// the lid (drawn hidden, so reduced motion keeps the eye open) shows for 4% of that period.
+// the lid (drawn hidden, so motion off keeps the eye open) shows for 4% of that period.
 const idleCss = (n: number): string => {
   if (!n) return IDLE_CSS
   const scope = `eoh-idle-s${n}`
   const every = 4 + (n % 5)
   const blink = `.${scope} .eoh-god-bk{animation:${scope}-k ${every}s steps(1) ${-phase(n, every, 0.754878)}s infinite}@keyframes ${scope}-k{0%{opacity:1}4%{opacity:0}}`
-  return shift(IDLE_CSS, phase(n, 2)).replaceAll('eoh-idle', scope).replace('@media', `${blink}\n@media`)
+  return shift(IDLE_CSS, phase(n, 2)).replaceAll('eoh-idle', scope).replace('</style>', `${blink}\n</style>`)
 }
 
 /**
@@ -411,8 +410,9 @@ export const godSvg = (tier: string, x: number, y: number, scale: number, isWalk
   }
   const legs = group('la') + (isWalking ? group('lb', '', ' opacity="0"') : '')
   const body = group('bd', group('pr') + group('gl') + group('bk', '', ' opacity="0"'))
-  const motion = isWalking ? ' eoh-walk' : isIdle ? (n ? ` eoh-idle-s${n}` : ' eoh-idle') : ''
-  return `<g transform="translate(${num(x, 0)},${num(y, 0)}) scale(${num(scale, 1)})" shape-rendering="crispEdges">${isWalking ? WALK_CSS : isIdle ? idleCss(n) : ''}<g class="eoh-god${motion}">${legs}${body}</g></g>`
+  const scope = isWalking ? 'eoh-walk' : isIdle ? (n ? `eoh-idle-s${n}` : 'eoh-idle') : ''
+  const css = isWalking ? WALK_CSS : isIdle ? idleCss(n) : ''
+  return `<g transform="translate(${num(x, 0)},${num(y, 0)}) scale(${num(scale, 1)})" shape-rendering="crispEdges">${css}${scope ? motionCss(scope) : ''}<g class="eoh-god${scope ? ` ${scope}` : ''}">${legs}${body}</g></g>`
 }
 
 // --- Poses: the Temple view shows each agent at work in its own chamber, and celebrating once it is done. A pose box
@@ -425,7 +425,7 @@ const OY = 8
 export type PoseName = 'work' | 'done' | 'idle'
 
 // A pose: its parts (paint order is the order a group first appears), the groups drawn hidden (alternate frames the
-// animation reveals; reduced motion keeps the default frame) and its CSS. In the CSS `$x` is the pose's group `x`
+// animation reveals; motion off keeps the default frame) and its CSS. In the CSS `$x` is the pose's group `x`
 // and `~` starts a keyframe name; both come out under the pose's own scope class so poses never clash on one page.
 // Periods divide one second, like the walk, so a once-a-second redraw restarts them in phase.
 interface Pose {
@@ -435,7 +435,7 @@ interface Pose {
   css: string
 }
 const style = (scope: string, css: string): string =>
-  `<style>${css.replaceAll('$', `.${scope} .eoh-p-`).replaceAll('~', `${scope}-`)}@media (prefers-reduced-motion:reduce){.${scope} *{animation:none!important}}</style>`
+  `<style>${css.replaceAll('$', `.${scope} .eoh-p-`).replaceAll('~', `${scope}-`)}</style>${motionCss(scope)}`
 /** `part` moved to group `cls`, `dy` rows lower. */
 const regroup = (part: Part, cls: string, dy = 0): Part => [cls, part[1] + dy, part[2], part[3]]
 // Two-frame toggle: shown for the first half of the period (or, delayed by half a period, the second half).

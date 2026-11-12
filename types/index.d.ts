@@ -103,8 +103,8 @@ declare module 'claude-code' {
       inflight: Shaped<HorusInflight[]>
       /** Written by the pane only: which of its sections (and the Gods' Running and Finished groups) are folded. */
       paneCollapsed: Shaped<{ session: boolean; agents: boolean; running: boolean; finished: boolean }>
-      /** Written by the pane (core resets it on /clear): Hall of Truth entries scrolled back from the newest (0 = follow). */
-      railOffset: number
+      /** Written by `/horus-motion` (doctor.ts): whether the mod's drawings animate (default true). */
+      motion: boolean
       /** Written by the pane (core resets it on /clear): the Hall of Truth's filter chip. */
       hallFilter: HorusHallFilter
       /** Written by the pane (core resets it on /clear): turns the user folded by hand; n >= 0 opened turn n, n < 0 closed turn -n-1. */

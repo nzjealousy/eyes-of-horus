@@ -3,6 +3,7 @@ import type { EngineInterface, On } from 'claude-code'
 
 import type { HorusPonytailLevel, HorusProgress, HorusTaskStatus } from '../types'
 import * as core from './core'
+import { motionCss, setMotion } from './motion'
 import { bg, dim, err, gold, goldBright, goldDim, ok, panelHi, purple, text, tierColor } from './theme'
 
 // The scan reads state refs only off literals in this file: restate core's atoms here, initials and shape tags from core.
@@ -13,6 +14,7 @@ const progress = atom({ plugin: 'eyes-of-horus', key: 'progress' } as const, cor
 const ponytail = atom({ plugin: 'eyes-of-horus', key: 'ponytail' } as const, core.ponytail.initial, { shape: core.ponytail.shape! })
 const usage = atom({ plugin: 'eyes-of-horus', key: 'usage' } as const, core.usage.initial, { shape: core.usage.shape! })
 const voice = atom({ plugin: 'eyes-of-horus', key: 'voice' } as const, core.voice.initial, { shape: core.voice.shape! })
+const motion = atom({ plugin: 'eyes-of-horus', key: 'motion' } as const, core.motion.initial)
 
 const LEVELS: readonly HorusPonytailLevel[] = ['off', 'lite', 'full', 'ultra']
 const FADE_MS = 10_000
@@ -128,8 +130,8 @@ export function progressSvg(p: HorusProgress, w: number, h = 10): string {
     return `${track}${r(x, seg, segColor(t), ' opacity="0.45"')}<g clip-path="url(#c${i})">${r(x - sheen, sheen, 'url(#s)', ' class="eoh-sheen"')}</g>`
   })
   const style =
-    `<style>.eoh-sheen{animation:eoh-sheen 1.6s linear infinite}@keyframes eoh-sheen{to{transform:translateX(${(seg + sheen).toFixed(1)}px)}}` +
-    `@media (prefers-reduced-motion: reduce){.eoh-sheen{animation:none}}</style>`
+    `<style>.eoh-sheen{animation:eoh-sheen 1.6s linear infinite}@keyframes eoh-sheen{to{transform:translateX(${(seg + sheen).toFixed(1)}px)}}</style>` +
+    motionCss('eoh-sheen')
   const defs = `<defs><linearGradient id="s" x1="0" x2="1"><stop offset="0" stop-color="${goldBright}" stop-opacity="0"/><stop offset="0.5" stop-color="${goldBright}" stop-opacity="0.8"/><stop offset="1" stop-color="${goldBright}" stop-opacity="0"/></linearGradient>${clips.join('')}</defs>`
   return svgDoc(w, h, style + defs + body.join(''))
 }
@@ -185,6 +187,7 @@ export const registerBand = (on: On) => {
       )
     const busy = await read($, terminalBusy)
     const p = await read($, progress)
+    setMotion(await read($, motion)) // before the bar is drawn
     const now = await $.clock.now()
     const cols = e.props.bodyColumns
     const dash = dashboardVisible(busy)

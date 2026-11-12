@@ -10,6 +10,7 @@ import * as core from './core'
 import { godGlyph, godSvg, POSE_H, POSE_W, poseSvg, slaveKey } from './gods'
 import { agentFeed, focusChamber, templeModel } from './hall'
 import type { FeedItem } from './hall'
+import { setMotion } from './motion'
 import {
   BAR_H,
   barFill,
@@ -58,6 +59,7 @@ const progress = atom({ plugin: 'eyes-of-horus', key: 'progress' } as const, cor
 const sessionLog = atom({ plugin: 'eyes-of-horus', key: 'sessionLog' } as const, core.sessionLog.initial, { shape: core.sessionLog.shape! })
 const armedStop = atom({ plugin: 'eyes-of-horus', key: 'armedStop' } as const, core.armedStop.initial)
 const chamber = atom({ plugin: 'eyes-of-horus', key: 'chamber' } as const, core.chamber.initial)
+const motion = atom({ plugin: 'eyes-of-horus', key: 'motion' } as const, core.motion.initial)
 
 /** One agent as its chamber shows it: `key` picks the sprite, `tier` the colour and the `who` line. */
 export type Room = {
@@ -115,8 +117,7 @@ const COL = 10 // a column's width
 const INSET = COL + 6 // text and figures start this far inside a drawing's edge
 const CSS =
   '<style>.fl{transform-box:fill-box;transform-origin:50% 100%;animation:eoh-fl .5s ease-in-out infinite}' +
-  '@keyframes eoh-fl{50%{transform:scale(.82,1.14)}}@keyframes eoh-in{from{opacity:0}}' +
-  '@media (prefers-reduced-motion:reduce){.fl,.arr{animation:none!important}}</style>'
+  '@keyframes eoh-fl{50%{transform:scale(.82,1.14)}}@keyframes eoh-in{from{opacity:0}}</style>'
 
 // A stone band: slabs with a joint every 28 px, its top edge in the accent.
 const slabs = (x: number, y: number, w: number, h: number, color: string) =>
@@ -431,14 +432,16 @@ export const registerTemple = (on: On) => {
     const ui = $.ui.resolve(e)
     const { Box, Text, Button, Client } = ui
     const W = Math.max(20, e.props.bodyColumns)
-    const [list, flow, log, focusId, armed, now] = await Promise.all([
+    const [list, flow, log, focusId, armed, moving, now] = await Promise.all([
       read($, agents),
       read($, progress),
       read($, sessionLog),
       read($, chamber),
       read($, armedStop),
+      read($, motion),
       $.clock.now(),
     ])
+    setMotion(moving) // before any drawing is built
     const { gods, slaves } = roster(list)
     const members = [...gods, ...slaves]
     const model = templeModel({ agents: list, progress: flow, members, tierOf, now, celebrateMs: CELEBRATE_MS })
@@ -477,12 +480,13 @@ export const registerTemple = (on: On) => {
       if (r.deny !== undefined) $.ui.toast(`${TEMPLE_TITLE}: cannot open that agent (${r.deny})`)
     }
     // The focus view's controls, a plain row above the drawing: Back, Transcript, and Stop while the agent runs.
+    // No Transcript on desktop: the desktop session draws no main view, so `$.ui.view` can only refuse there.
     const controls = (a?: HorusAgent) => (
       <Box key="temple-controls" flexDirection="row">
         <Button key="temple-back" plain onPress={() => update($, chamber, () => '')}>
           <Text color={T.gold}>Back</Text>
         </Button>
-        {a === undefined
+        {a === undefined || e.surface === 'desktop'
           ? null
           : [
               <Text key="sep:transcript" dimColor>

@@ -3,8 +3,6 @@ import { expect, test } from 'claude-code/testing'
 import type { HorusAgent, HorusLogEntry, HorusProgress } from '../types'
 import {
   agentFeed,
-  barRuns,
-  barSegments,
   disarmStop,
   focusChamber,
   hallLines,
@@ -18,8 +16,7 @@ import {
   toggleTurn,
 } from '../hooks/hall'
 import type { HallHead, HallLine } from '../hooks/hall'
-import { railEntries, railWindow, roster, scrollOffset, tierOf } from '../hooks/pane'
-import * as T from '../hooks/theme'
+import { roster, tierOf } from '../hooks/pane'
 
 const E = (id: string, turn: number, kind: HorusLogEntry['kind'], at: number, extra: Partial<HorusLogEntry> = {}): HorusLogEntry => ({
   id,
@@ -104,17 +101,12 @@ test('row durations: mm:ss when ended, … while running, none for prompts and r
   expect(LOG.map(rowDuration)).toEqual(['', '00:03', '', '', '…', '00:00', '…', '00:03'])
 })
 
-test('scrolling counts display lines: headers and rows, folded turns as one line', async () => {
+// The pane draws every display line (it scrolls natively), so hallLines is the whole list, oldest first.
+test('display lines: every header and row of the log, folded turns as one line', async () => {
   const marks = [1] // both turns open: 2 headers + 3 + 5 rows
-  const lines = hallLines(LOG, 'all', marks, 20_000)
-  expect(lines.length).toBe(10)
-  const n = railEntries(4)
-  expect(show(railWindow(lines, n))).toEqual(['agent:a1', '  s1', '  s2', 't2'])
-  const off = scrollOffset(0, -100, lines.length, n) // a big wheel up stops at the oldest
-  expect(off).toBe(6)
-  expect(show(railWindow(lines, n, off))).toEqual(['v1', 'p1', 't1', 'r1'])
-  // The default fold leaves 1 + 6 lines, so the same wheel stops sooner.
-  expect(scrollOffset(0, -100, hallLines(LOG, 'all', [], 20_000).length, n)).toBe(3)
+  expect(show(hallLines(LOG, 'all', marks, 20_000))).toEqual(['v1', 'p1', 't1', 'r1', 'v2', 'p2', 'agent:a1', '  s1', '  s2', 't2'])
+  // The default fold leaves turn 1 as its header alone.
+  expect(hallLines(LOG, 'all', [], 20_000).length).toBe(7)
 })
 
 test('Now line: main tool, else running agents by tag, else the phase, else idle', async () => {
@@ -128,29 +120,6 @@ test('Now line: main tool, else running agents by tag, else the phase, else idle
   // A stale running main tool after the turn ended does not count.
   expect(nowLine([tool], 'idle', 0, who)).toEqual({ text: '◈ idle' })
   expect(nowLine([E('agent:z', 1, 'agent', 9, { status: 'running', agentId: 'z' })], 'idle', 0, who)).toEqual({ text: '◈ 1 agent running', since: 9 })
-})
-
-test('bar strip: segments placed by start along the turn, as wide as they ran, coloured by kind; failed red, running flagged', async () => {
-  const turn2 = LOG.filter(e => e.turn === 2)
-  // Turn 2 runs 10s..now (20s): 10 000 ms over 100 units. The prompt draws nothing.
-  expect(barSegments(turn2, 100, 20_000)).toEqual([
-    { x: 10, w: 90, color: T.violet, running: true }, // the agent, running to now
-    { x: 20, w: 5, color: T.err, running: false }, // its failed tool
-    { x: 30, w: 70, color: T.aqua, running: true },
-    { x: 40, w: 30, color: T.aqua, running: false },
-  ])
-  // Turn 1 ended (1s..6s over 10 units): the reply has no duration, so it takes the one unit left at the end.
-  expect(barSegments(LOG.filter(e => e.turn === 1), 10, 99_999)).toEqual([
-    { x: 2, w: 6, color: T.aqua, running: false },
-    { x: 9, w: 1, color: T.gold, running: false },
-  ])
-  expect([barSegments([], 12, 0), barSegments(turn2, 0, 0)]).toEqual([[], []])
-  // Glyph runs: a cell takes the segment that started last over it, so parallel work draws over the agent.
-  const runs = barRuns(barSegments(turn2, 10, 20_000), 10).map(r => (r.seg === undefined ? `-${r.n}` : `${r.seg.color}${r.seg.running ? '~' : ''}${r.n}`))
-  expect(runs).toEqual(['-1', `${T.violet}~1`, `${T.err}1`, `${T.aqua}~1`, `${T.aqua}3`, `${T.aqua}~3`])
-  // A header keeps the whole turn for its strip whatever the filter.
-  const head = hallLines(LOG, 'agents', [], 20_000).find((l): l is HallHead => l.kind === 'head')
-  expect(head?.entries.map(e => e.id)).toEqual(['p2', 'agent:a1', 's1', 's2', 't2'])
 })
 
 test('stop arming: a first press arms, the same key confirms, another key re-arms, the timer disarms only its own key', async () => {

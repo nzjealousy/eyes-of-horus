@@ -240,8 +240,10 @@ test('/clear resets the log, agents, flow, counters and the pane marks; other se
   const s = peek()
   expect([s.sessionLog, s.agents, s.progress]).toEqual([[], [], null])
   expect(s.usage).toEqual({ contextPct: 25, contextUsed: 50000, contextMax: 200000, tokensTotal: 0, costUsd: 0, agentTimeMs: 0, turns: 0, startedAt: 1000 })
-  for (const [k, v] of [['railOffset', 0], ['hallFilter', 'all'], ['chamber', ''], ['armedStop', '']] as const) expect(written[k]).toBe(v)
+  for (const [k, v] of [['hallFilter', 'all'], ['chamber', ''], ['armedStop', '']] as const) expect(written[k]).toBe(v)
   expect(written.hallOpen).toEqual([])
+  // railOffset is gone (the Hall draws every line); the motion switch is a preference, not a pane mark: /clear keeps it.
+  expect(['railOffset', 'motion'].filter(k => k in written)).toEqual([])
 })
 
 test('hostile savvy-progress input is clamped', () => {

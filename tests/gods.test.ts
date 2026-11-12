@@ -97,7 +97,7 @@ const POSE_KEYS = [...GOD_TIERS, 'nope', ...Object.values(TRADES).map(slaveKey)]
 const scopeOf = (svg: string) => /class="eoh-pose ([\w-]+)"/.exec(svg)?.[1] ?? ''
 
 // The CSS is scoped: every class rule and keyframe name starts with the pose's scope, every animation it runs is defined
-// right there, reduced motion stops it, and every group drawn hidden has a rule that shows it.
+// right there, no OS reduced-motion rule stops it, and every group drawn hidden has a rule that shows it.
 const checkPoseCss = (svg: string): void => {
   const scope = scopeOf(svg)
   expect(scope).toMatch(/^eoh-(wk-[a-z]+|done)(-s\d+)?$/)
@@ -108,7 +108,8 @@ const checkPoseCss = (svg: string): void => {
   for (const name of frames) expect(name.startsWith(`${scope}-`)).toBe(true)
   for (const [, decl] of css.matchAll(/animation:([^;}]+)/g))
     for (const [name] of (decl as string).matchAll(/eoh-[\w-]+/g)) expect(frames).toContain(name)
-  expect(css).toContain(`@media (prefers-reduced-motion:reduce){.${scope} *{animation:none!important}}`)
+  // The OS reduced-motion setting no longer freezes a pose (motion.test.ts pins the /horus-motion off-switch instead).
+  expect(svg).not.toContain('prefers-reduced-motion')
   for (const [, cls] of svg.matchAll(/<g class="eoh-p-([a-z]+)" opacity="0">/g)) expect(rules).toContain(`.eoh-p-${cls}{animation`)
 }
 
@@ -180,7 +181,7 @@ test('a seed starts a pose at its own phase under its own scope; seed 0 is the u
       for (const svg of [a, b, poseSvg(key, 3, 4, 3, pose, 999)]) {
         checkSvg(svg, POSE_W, POSE_H)
         expect(svg.length).toBeLessThan(5120)
-        expect(svg).toMatch(/@media \(prefers-reduced-motion:reduce\)\{\.eoh-[\w-]+-s\d+ \*\{animation:none!important\}\}/)
+        expect(svg).not.toContain('prefers-reduced-motion') // the off-switch is /horus-motion's (motion.test.ts)
       }
       if (pose === 'idle') continue
       // Work and done: the same drawing, only the scope and the delays differ.

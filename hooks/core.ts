@@ -45,8 +45,8 @@ export const paneCollapsed = atom(
   { shape: 'pane-collapsed-2' },
 )
 
-/** Hall of Truth entries scrolled back from the newest; 0 follows the newest. Written by the pane (and reset on /clear). */
-export const railOffset = atom({ plugin: 'eyes-of-horus', key: 'railOffset' } as const, 0)
+/** Whether the mod's drawings animate (`/horus-motion`, doctor.ts); the OS reduced-motion setting is not consulted. */
+export const motion = atom({ plugin: 'eyes-of-horus', key: 'motion' } as const, true)
 /** The Hall of Truth's filter chip and the user's turn fold marks (see hall.ts isTurnOpen). Written by the pane (and reset on /clear). */
 export const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const, 'all')
 export const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, [], { shape: 'hall-open-1' })
@@ -416,7 +416,6 @@ export const registerCore = (on: On) => {
       await update($, progress, () => progress.initial)
       const at = await $.clock.now()
       await update($, usage, u => ({ ...u, tokensTotal: 0, costUsd: 0, agentTimeMs: 0, turns: 0, startedAt: at }))
-      await update($, railOffset, () => railOffset.initial)
       await update($, hallOpen, () => hallOpen.initial)
       await update($, hallFilter, () => hallFilter.initial)
       await update($, chamber, () => chamber.initial)

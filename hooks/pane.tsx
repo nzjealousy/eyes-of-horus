@@ -5,8 +5,9 @@ import type { HorusAgent, HorusLogKind, HorusProgress, HorusTaskStatus, HorusUsa
 import { fmtElapsed } from './clients/agent-clock'
 import * as core from './core'
 import { GOD_H, GOD_TIERS, GOD_W, godGlyph, godName, godSvg, slaveKey } from './gods'
-import { barRuns, barSegments, FILTER_LABEL, HALL_FILTERS, hallLines, headLabel, newestTurn, nowLine, toggleTurn } from './hall'
-import type { BarSeg, HallHead, HallRow } from './hall'
+import { FILTER_LABEL, HALL_FILTERS, hallLines, headLabel, newestTurn, nowLine, toggleTurn } from './hall'
+import type { HallHead, HallRow } from './hall'
+import { motionCss, motionOn, setMotion } from './motion'
 import { openChamber, stopControls } from './stop'
 import * as T from './theme'
 
@@ -21,7 +22,7 @@ const usage = atom({ plugin: 'eyes-of-horus', key: 'usage' } as const, core.usag
 const paneCollapsed = atom({ plugin: 'eyes-of-horus', key: 'paneCollapsed' } as const, core.paneCollapsed.initial, {
   shape: core.paneCollapsed.shape!,
 })
-const railOffset = atom({ plugin: 'eyes-of-horus', key: 'railOffset' } as const, core.railOffset.initial)
+const motion = atom({ plugin: 'eyes-of-horus', key: 'motion' } as const, core.motion.initial)
 const phase = atom({ plugin: 'eyes-of-horus', key: 'phase' } as const, core.phase.initial)
 const phaseSince = atom({ plugin: 'eyes-of-horus', key: 'phaseSince' } as const, core.phaseSince.initial)
 const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const, core.hallFilter.initial)
@@ -48,9 +49,6 @@ export type Card = {
 }
 
 export const trunc = (s: string, n: number) => (n <= 0 ? '' : s.length <= n ? s : s.slice(0, n - 1) + '…')
-
-/** The `n` display lines shown when scrolled `off` lines back from the newest. */
-export const railWindow = <L,>(lines: readonly L[], n: number, off = 0) => lines.slice(Math.max(0, lines.length - off - Math.max(1, n)), lines.length - off)
 
 // `savvy-careful` or `savvy-flow:savvy-careful` -> `careful`; anything else has no tier.
 export const tierOf = (type: string): string | undefined => {
@@ -206,15 +204,14 @@ export const fitText = (s: string, size: number, maxW: number) => {
 
 const CSS =
   `<style>.t{fill:${T.text}}.s{fill:${T.dim}}.k{fill:${T.panelHi}}.ln{stroke:${T.panelHi}}` +
-  '.live{animation:eoh-live 1.6s ease-in-out infinite}@keyframes eoh-live{50%{opacity:.3}}' +
-  '@media (prefers-reduced-motion:reduce){.live,.sheen{animation:none}}</style>'
+  '.live{animation:eoh-live 1.6s ease-in-out infinite}@keyframes eoh-live{50%{opacity:.3}}</style>'
 // The dot pattern is phased by the drawing's offset in the section, so stacked drawings continue one grid.
 const dots = (W: number, H: number, gridY: number) =>
   `<defs><pattern id="d" y="${-(gridY % GRID_STEP)}" width="${GRID_STEP}" height="${GRID_STEP}" patternUnits="userSpaceOnUse">` +
   `<circle cx="${GRID_STEP / 2}" cy="${GRID_STEP / 2}" r="1" fill="${T.goldDim}" opacity="0.4"/></pattern></defs>` +
   `<rect width="${W}" height="${H}" fill="url(#d)"/>`
 export const svgDoc = (W: number, H: number, gridY: number, body: string) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${CSS}${dots(W, H, gridY)}${body}</svg>`
+  `<svg xmlns="http://www.w3.org/2000/svg" class="eoh-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${CSS}${motionCss('eoh-svg')}${dots(W, H, gridY)}${body}</svg>`
 export const text = (x: number, y: number, size: number, body: string, attrs = '') =>
   `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}"${attrs}>${body}</text>`
 export const r1 = (n: number) => Math.round(n * 10) / 10
@@ -249,9 +246,10 @@ export const pixelBar = (x: number, y: number, w: number, c: Pick<Card, 'status'
   let body: string
   if (fill === undefined) {
     const seg = Math.round(w * 0.3)
+    // Motion off, the sweeping block rests at the bar's start, so the bar still reads as running.
     body =
       `<style>.sheen{animation:eoh-sheen 1.6s linear infinite}@keyframes eoh-sheen{to{transform:translateX(${r1(w + seg)}px)}}</style>` +
-      `<g clip-path="url(#bc)"><rect class="sheen" x="${r1(x - seg)}" y="${y}" width="${seg}" height="${BAR_H}" fill="url(#px)"/></g>`
+      `<g clip-path="url(#bc)"><rect class="sheen" x="${r1(motionOn() ? x - seg : x)}" y="${y}" width="${seg}" height="${BAR_H}" fill="url(#px)"/></g>`
   } else {
     body = fill > 0 ? `<g clip-path="url(#bc)"><rect x="${x}" y="${y}" width="${r1(w * fill)}" height="${BAR_H}" fill="url(#px)"/></g>` : ''
   }
@@ -292,11 +290,13 @@ const clockGroups = (s: number): { from: number; to: number; cells: ClockCell[] 
     { from: 3600, to: Infinity, cells: [...String(Math.max(1, Math.floor(s / 3600))), ':', ...MMSS] as ClockCell[] },
   ].filter(g => g.to > s)
 
-/** The elapsed time `ms` right-aligned at `xr`, ticking while `running`: its markup and the widest it gets (`w`). */
+/** The elapsed time `ms` right-aligned at `xr`, ticking while `running` and motion is on: its markup and the widest it gets (`w`). */
 export const clockSvg = (xr: number, y: number, size: number, c: Pick<Card, 'status' | 'ms'>, color: string = T.aqua) => {
-  if (c.status !== 'running' || c.ms === undefined) {
+  if (c.status !== 'running' || c.ms === undefined || !motionOn()) {
+    // Motion off, a running clock shows its time at this draw, in its own colour.
     const label = elapsedLabel(c)
-    return { svg: text(xr, y, size, xml(label), ' class="s" text-anchor="end" font-variant-numeric="tabular-nums"'), w: textWidth(label, size) }
+    const ink = c.status === 'running' && c.ms !== undefined ? ` fill="${color}"` : ' class="s"'
+    return { svg: text(xr, y, size, xml(label), `${ink} text-anchor="end" font-variant-numeric="tabular-nums"`), w: textWidth(label, size) }
   }
   const s = c.ms / 1000
   const lh = size * 2
@@ -518,32 +518,14 @@ export function rosterSvg(W: number, members: readonly Member[], gridY = 0, smal
   return { svg: svgDoc(W, h, gridY, body.join('')), h }
 }
 
-// The Hall of Truth scrolls itself: a wheel over it moves `railOffset` (display lines, turn headers and rows, back
-// from the newest) and the pane's own window stays put, so the Gods above it never move. Where it starts is kept from
-// the last draw. shortcut: module state, reset by a hot reload until the next draw; a desktop row is taken as ~20 px
-// tall (the Gods' Svgs are counted in it, and the desktop Now line is drawn exactly one such row tall).
+// A desktop row is taken as ~20 px tall: the desktop Now line is drawn exactly one such row tall.
 export const DESKTOP_ROW_PX = 20
-const hall = { top: 0, entries: 1, total: 0 }
-/** Display lines the Hall shows in `rows` rows: one row each (headers and entries alike). */
-export const railEntries = (rows: number) => Math.max(1, Math.floor(rows))
 
 /** The desktop Gods' drawing width for `cols` body columns. */
 export const svgWidth = (cols: number) => Math.max(240, Math.min(900, cols * 8 - 8))
 /** Terminal columns and desktop pixels kept free at the Now line's right end for its "Stop turn" Button. */
 export const STOP_COLS = 11
 export const STOP_PX = 88
-// A turn header's bar strip: 12 cells of glyphs, or a drawing as wide (8 px a column, as svgWidth takes it), shown
-// from STRIP_MIN_COLS so the header's label keeps its room.
-export const STRIP_CELLS = 12
-export const STRIP_PX = STRIP_CELLS * 8
-export const STRIP_H = 10
-export const STRIP_MIN_COLS = 52
-/** The desktop strip: a thin track, a rounded bar per segment; running ones pulse. */
-export const stripSvg = (segs: readonly BarSeg[]) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${STRIP_PX}" height="${STRIP_H}" viewBox="0 0 ${STRIP_PX} ${STRIP_H}">${CSS}` +
-  `<rect y="4.5" width="${STRIP_PX}" height="1" fill="${T.dim}" opacity="0.5"/>` +
-  segs.map(s => `<rect${s.running ? ' class="live"' : ''} x="${s.x}" y="1" width="${s.w}" height="8" rx="1.5" fill="${s.color}"/>`).join('') +
-  '</svg>'
 /** The desktop Now line: its text, then its clock (ticking from `ms` when given), clear of the Stop corner. */
 export const nowSvg = (W: number, label: string, ms?: number) => {
   const H = DESKTOP_ROW_PX
@@ -556,9 +538,6 @@ export const nowSvg = (W: number, label: string, ms?: number) => {
     '</svg>'
   )
 }
-/** The offset after a wheel move of `by` rows (positive toward the newest), clamped to the log. */
-export const scrollOffset = (offset: number, by: number, total: number, entries: number) =>
-  Math.max(0, Math.min(Math.max(0, total - entries), offset - Math.round(by)))
 
 // shortcut: whether the pane was placed is module state; a reload asks again at the next turn.
 let isOpen = false
@@ -585,15 +564,6 @@ export const registerPane = (on: On) => {
     return next(e)
   })
 
-  // A wheel over the Hall of Truth scrolls it alone; over the Gods (or the scroll keys) the pane moves as usual.
-  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
-    if (e.origin.kind === 'plugin' || e.pointer === undefined || e.pointer.row < hall.top) return next(e)
-    const off = await read($, railOffset)
-    const to = scrollOffset(off, e.by, hall.total, hall.entries)
-    if (to !== off) await update($, railOffset, () => to)
-    return {}
-  }).catch(($, e, next) => next(e))
-
   on('ui.render', { component: 'Backdrop' }, ($, e, next) => {
     if (e.surface !== 'desktop' || e.props.plugin !== 'eyes-of-horus') return next(e)
     const { Svg } = $.ui.resolve(e)
@@ -605,13 +575,13 @@ export const registerPane = (on: On) => {
     const ui = $.ui.resolve(e)
     const { Box, Text, Button, Client } = ui
     const W = Math.max(20, e.props.bodyColumns)
-    const [list, flow, log, use, folded, offset, now, ph, phSince, filter, marks, tid, armed] = await Promise.all([
+    const [list, flow, log, use, folded, moving, now, ph, phSince, filter, marks, tid, armed] = await Promise.all([
       read($, agents),
       read($, progress),
       read($, sessionLog),
       read($, usage),
       read($, paneCollapsed),
-      read($, railOffset),
+      read($, motion),
       $.clock.now(),
       read($, phase),
       read($, phaseSince),
@@ -620,6 +590,7 @@ export const registerPane = (on: On) => {
       read($, turnId),
       read($, armedStop),
     ])
+    setMotion(moving) // before any drawing is built
     const cards = buildCards(list, flow, now)
     const godCards = cards.filter(c => c.tier !== undefined)
     const slaveCards = cards.filter(c => c.tier === undefined)
@@ -720,16 +691,12 @@ export const registerPane = (on: On) => {
             ...s.running.map(card),
             ...s.finished.map(card),
           ]
-      const rows = Math.ceil(y / DESKTOP_ROW_PX)
-      return {
-        rows,
-        node: (
-          <Box key="agents" flexDirection="column">
-            {header}
-            {body}
-          </Box>
-        ),
-      }
+      return (
+        <Box key="agents" flexDirection="column">
+          {header}
+          {body}
+        </Box>
+      )
     }
 
     // --- Gods and Slaves, terminal: one row each, so the section's height is the list's length.
@@ -822,28 +789,17 @@ export const registerPane = (on: On) => {
               ...slaveCards.map(terminalCard),
             ]),
       ]
-      return {
-        rows: rows.length,
-        node: (
-          <Box key="agents" flexDirection="column">
-            {rows}
-          </Box>
-        ),
-      }
+      return (
+        <Box key="agents" flexDirection="column">
+          {rows}
+        </Box>
+      )
     }
 
-    // --- The Hall of Truth: a folding header, the Now line, the filter chips, the one-line stats, and its own window
-    // over the display lines (turn headers and entry rows).
+    // --- The Hall of Truth: a folding header, the Now line, the filter chips, the one-line stats, and every display
+    // line (turn headers and entry rows; the log holds core.LOG_CAP entries at most), scrolled by the pane itself.
     const top = desktopTop() ?? terminalTop()
-    const railTop = top.rows + 5 // the blank row, the header, the Now line, the filter chips and the stats line
-    const entries = railEntries(Math.max(8, e.props.scroll.bodyRows - railTop))
     const lines = hallLines(log, filter, marks, now)
-    const off = Math.min(offset, Math.max(0, lines.length - entries))
-    const rail = railWindow(lines, entries, off)
-    hall.top = railTop
-    hall.entries = entries
-    hall.total = folded.session ? 0 : lines.length
-    const older = lines.length - off - rail.length
 
     // An agent's tag: its god tier, else its short type; undefined for an id the agents list no longer holds.
     const agentType = (id: string) => list.find(a => a.id === id)?.type
@@ -895,10 +851,7 @@ export const registerPane = (on: On) => {
         </Box>
       )
 
-    const setFilter = async (f: typeof filter) => {
-      await update($, hallFilter, () => f)
-      await update($, railOffset, () => 0)
-    }
+    const setFilter = (f: typeof filter) => update($, hallFilter, () => f)
     const filters = (
       <Box key="hall-filters" flexDirection="row">
         {HALL_FILTERS.flatMap((f, i) => [
@@ -913,40 +866,15 @@ export const registerPane = (on: On) => {
     )
 
     const newest = newestTurn(log)
-    const hasStrip = W >= STRIP_MIN_COLS
-    // The turn's mini timeline, from all its entries whatever the filter: a drawing on desktop, ━/─ runs elsewhere.
-    const strip = (hd: HallHead) => {
-      const alt = `turn ${hd.turn} timeline`
-      return (
-        <Box key={`strip:${hd.turn}`} marginX={1}>
-          {e.surface === 'desktop' && 'Svg' in ui ? (
-            <ui.Svg source={stripSvg(barSegments(hd.entries, STRIP_PX, now))} alt={alt} width={STRIP_PX} height={STRIP_H} />
-          ) : (
-            <Text>
-              {barRuns(barSegments(hd.entries, STRIP_CELLS, now), STRIP_CELLS).map(r =>
-                r.seg === undefined ? (
-                  <Text color={T.dim}>{'─'.repeat(r.n)}</Text>
-                ) : (
-                  <Text color={r.seg.color} dimColor={r.seg.running}>
-                    {'━'.repeat(r.n)}
-                  </Text>
-                ),
-              )}
-            </Text>
-          )}
-        </Box>
-      )
-    }
     const headNode = (hd: HallHead) => {
       const dur = fmtElapsed(hd.ms)
       return (
         <Box key={`head:${hd.turn}`} flexDirection="row" width={W}>
           <Box flexGrow={1}>
             <Button key={`turn:${hd.turn}`} plain onPress={() => update($, hallOpen, m => toggleTurn(m, hd.turn, newest))}>
-              <Text color={T.gold}>{trunc(headLabel(hd), W - dur.length - 1 - (hasStrip ? STRIP_CELLS + 2 : 0))}</Text>
+              <Text color={T.gold}>{trunc(headLabel(hd), W - dur.length - 1)}</Text>
             </Button>
           </Box>
-          {hasStrip ? strip(hd) : null}
           <Text dimColor>{dur}</Text>
         </Box>
       )
@@ -981,16 +909,11 @@ export const registerPane = (on: On) => {
         </Box>
       )
     }
-    const chips = trunc(
-      `turns ${use.turns} · ${fmtElapsed(sessionMs(use, now))} · ctx ${Math.round(use.contextPct)}%` +
-        (older > 0 ? ` · ↑${older} older` : '') +
-        (off > 0 ? ` · ↓${off} newer` : ''),
-      W,
-    )
+    const chips = trunc(`turns ${use.turns} · ${fmtElapsed(sessionMs(use, now))} · ctx ${Math.round(use.contextPct)}%`, W)
 
     return (
       <Box flexDirection="column" width={W}>
-        {top.node}
+        {top}
         <Text> </Text>
         <Button key="session-toggle" plain onPress={() => fold('session')}>
           <Text bold color={T.gold}>
@@ -1004,9 +927,9 @@ export const registerPane = (on: On) => {
           ? null
           : log.length === 0
             ? <Text dimColor>Nothing yet: send a prompt.</Text>
-            : rail.length === 0
+            : lines.length === 0
               ? <Text dimColor>Nothing under this filter.</Text>
-              : rail.map((l, i) => (l.kind === 'head' ? headNode(l) : rowNode(l, i)))}
+              : lines.map((l, i) => (l.kind === 'head' ? headNode(l) : rowNode(l, i)))}
       </Box>
     )
   })

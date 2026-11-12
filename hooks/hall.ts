@@ -3,7 +3,6 @@
 import type { HorusAgent, HorusAgentStatus, HorusHallFilter, HorusLogEntry, HorusPhase, HorusProgress } from '../types'
 import { fmtElapsed } from './clients/agent-clock'
 import { slaveKey } from './gods'
-import * as T from './theme'
 
 export const HALL_FILTERS: readonly HorusHallFilter[] = ['all', 'main', 'agents', 'tools']
 export const FILTER_LABEL: Record<HorusHallFilter, string> = { all: 'All', main: 'Main', agents: 'Agents', tools: 'Tools' }
@@ -25,7 +24,6 @@ export const toggleTurn = (marks: readonly number[], turn: number, newest: numbe
 
 export const newestTurn = (log: readonly HorusLogEntry[]) => log.reduce((n, e) => Math.max(n, e.turn), -1)
 
-/** `entries`: every entry of the turn, whatever the filter (its bar strip is drawn from them). */
 export type HallHead = {
   kind: 'head'
   turn: number
@@ -34,7 +32,6 @@ export type HallHead = {
   agents: number
   ms: number
   running: boolean
-  entries: readonly HorusLogEntry[]
 }
 /** `sub`: a subagent's tool, drawn indented under its agent's tag; `dur`: '' (none), '…' (running) or mm:ss. */
 export type HallRow = { kind: 'row'; entry: HorusLogEntry; sub: boolean; dur: string }
@@ -70,7 +67,7 @@ export function hallLines(log: readonly HorusLogEntry[], filter: HorusHallFilter
     const open = all.some(e => e.kind === 'agent' && e.status === 'running') || isTurnOpen(turn, newest, marks)
     const tools = all.filter(e => e.kind === 'tool').length
     const agents = all.filter(e => e.kind === 'agent').length
-    out.push({ kind: 'head', turn, open, tools, agents, ms: Math.max(0, end - all[0]!.at), running, entries: all })
+    out.push({ kind: 'head', turn, open, tools, agents, ms: Math.max(0, end - all[0]!.at), running })
     if (open) for (const e of shown) out.push({ kind: 'row', entry: e, sub: e.agentId !== undefined && e.kind !== 'agent', dur: rowDuration(e) })
   }
   return out
@@ -98,46 +95,6 @@ export function nowLine(
   }
   if (phase !== 'idle') return { text: `◈ ${phase}`, since: phaseSince }
   return { text: '◈ idle' }
-}
-
-/** One segment of a turn's bar strip, in units of the strip's width (cells or pixels). */
-export type BarSeg = { x: number; w: number; color: string; running: boolean }
-const SEG_COLOR: Record<string, string> = { tool: T.aqua, agent: T.violet, reply: T.gold }
-
-/**
- * A turn's mini timeline `width` units wide: a segment per tool, agent and reply, placed by its start along the turn's
- * span (its first entry to its last end, to `now` while anything runs) and as wide as it ran, one unit at least.
- * Ordered by start, so one drawn later lies over an earlier one it overlaps (parallel agents).
- */
-export function barSegments(entries: readonly HorusLogEntry[], width: number, now: number): BarSeg[] {
-  if (entries.length === 0 || width < 1) return []
-  const t0 = Math.min(...entries.map(e => e.at))
-  const running = entries.some(e => e.status === 'running')
-  const span = Math.max(1, (running ? now : Math.max(...entries.map(e => e.endedAt ?? e.at))) - t0)
-  const units = (ms: number) => (ms / span) * width
-  return entries
-    .filter(e => e.kind !== 'prompt')
-    .sort((a, b) => a.at - b.at)
-    .map(e => {
-      const x = Math.min(width - 1, Math.max(0, Math.floor(units(e.at - t0))))
-      const end = e.status === 'running' ? now : (e.endedAt ?? e.at)
-      const w = Math.min(width - x, Math.max(1, Math.round(units(end - e.at))))
-      return { x, w, color: e.status === 'failed' ? T.err : (SEG_COLOR[e.kind] ?? T.dim), running: e.status === 'running' }
-    })
-}
-
-/** The strip as runs of cells for a glyph bar: a cell takes the last segment over it; a run with no `seg` is a gap. */
-export function barRuns(segs: readonly BarSeg[], width: number): { seg?: BarSeg; n: number }[] {
-  const cells: (BarSeg | undefined)[] = Array.from({ length: width }, () => undefined)
-  for (const s of segs) cells.fill(s, s.x, s.x + s.w)
-  const same = (a?: BarSeg, b?: BarSeg) => a === b || (a !== undefined && b !== undefined && a.color === b.color && a.running === b.running)
-  const runs: { seg?: BarSeg; n: number }[] = []
-  for (const c of cells) {
-    const last = runs.at(-1)
-    if (last !== undefined && same(last.seg, c)) last.n++
-    else runs.push(c === undefined ? { n: 1 } : { seg: c, n: 1 })
-  }
-  return runs
 }
 
 // The two-step Stop Buttons: `armedStop` holds the key armed ('turn' or `agent:<agentId>`), '' when none.

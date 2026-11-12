@@ -1,17 +1,14 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import type { HorusAgent, HorusLogEntry, HorusProgress } from '../types'
+import type { HorusAgent, HorusProgress } from '../types'
 import { fmtElapsed } from '../hooks/clients/agent-clock'
-import * as T from '../hooks/theme'
 import type { BackdropApi, Card } from '../hooks/pane'
 import {
   agentSvg,
   barFill,
   buildCards,
-  railEntries,
   roster,
-  scrollOffset,
   cardLayout,
   clockSvg,
   elapsedLabel,
@@ -23,7 +20,6 @@ import {
   OPEN_W,
   plannedLayout,
   plannedSvg,
-  railWindow,
   rowSvg,
   setBackdrop,
   textWidth,
@@ -89,14 +85,11 @@ test('tiers come from savvy-flow agent types; groups split running, finished (ne
   expect([g.running.map(c => c.key), g.finished.map(c => c.key), g.planned.map(c => c.title)]).toEqual([['a3'], ['a2', 'a1'], ['later']])
 })
 
-test('formatting: elapsed, tokens, cost, truncation, rail window', async () => {
+test('formatting: elapsed, tokens, cost, truncation', async () => {
   expect([fmtElapsed(-5), fmtElapsed(42_900), fmtElapsed(187_000), fmtElapsed(3_725_000)]).toEqual(['00:00', '00:42', '03:07', '1:02:05'])
   expect([fmtTokens(950), fmtTokens(12_400), fmtTokens(2_500_000)]).toEqual(['950', '12k', '2.5M'])
   expect([fmtCost(1.5), fmtCost(12.34)]).toEqual(['≈$1.50', '≈$12.3'])
   expect([trunc('abcdef', 4), trunc('abc', 4), trunc('abc', 0)]).toEqual(['abc…', 'abc', ''])
-  const log: HorusLogEntry[] = Array.from({ length: 10 }, (_, i) => ({ id: `t${i}`, at: i, kind: 'tool', label: `t${i}`, turn: 1 }))
-  expect(railWindow(log, 3).map(r => r.label)).toEqual(['t7', 't8', 't9'])
-  expect(railWindow([], 3)).toEqual([])
   const c = (status: Card['status'], ms?: number): Card => ({ key: 'k', depth: 0, type: 'x', title: 't', status, ...(ms === undefined ? {} : { ms }) })
   // A refused run (failed in under a second) and a card with no start read '—'.
   expect([elapsedLabel(c('failed', 0)), elapsedLabel(c('failed', 1500)), elapsedLabel(c('done', 0)), elapsedLabel(c('pending'))]).toEqual(['—', '00:01', '00:00', '—'])
@@ -247,7 +240,7 @@ const SEEDED = {
 test('the pane draws cards and the rail, and a press opens the agent in the Temple, on every surface', async ($, on) => {
   seed(on, SEEDED)
   // ↗ now focuses the agent's chamber and opens the Temple pane (the transcript view moved to the Temple's own
-  // Transcript Button: temple.test.tsx); an open that is not placed is toasted.
+  // Transcript Button, terminal only: temple.test.tsx); an open that is not placed is toasted.
   const opened: string[] = []
   const focused: unknown[] = []
   const toasts: string[] = []
@@ -449,7 +442,7 @@ test('session start sets the backdrop and opens the pane, and survives refusals'
   expect(calls).toEqual(['backdrop:horus:#0c0816', 'open:horus:The Field of Reeds (Aaru)'])
 })
 
-test('bars fill from step reports; the Hall of Truth scrolls within the log; the roster lists every god and worker', async () => {
+test('bars fill from step reports; the roster lists every god and worker', async () => {
   expect([
     barFill({ status: 'running', steps: { done: 3, total: 7, note: '' } }),
     barFill({ status: 'running' }),
@@ -461,10 +454,6 @@ test('bars fill from step reports; the Hall of Truth scrolls within the log; the
   expect(svg).toContain('Tasks 5/7')
   expect(svg).toContain('71%')
   expect(svg).toContain('Rewriting BALANCE.md')
-  // Compact rows: one display line per row (no │ connectors any more, which used to halve this to 5).
-  expect(railEntries(9)).toBe(9)
-  // A wheel up (negative) goes back in time, never past the oldest; down returns to following the newest.
-  expect([scrollOffset(0, -3, 20, 5), scrollOffset(14, -3, 20, 5), scrollOffset(2, 5, 20, 5), scrollOffset(0, -3, 4, 5)]).toEqual([3, 15, 0, 0])
   const r = roster([A('x', 'look', 'running', undefined, 'Explore'), A('y', 'odd', 'done', 2, 'my-plugin:helper')])
   expect(r.gods.map(m => m.name)).toEqual(['Ra', 'Anubis', 'Horus', 'Thoth', 'Bastet'])
   expect(r.slaves.find(m => m.name === 'Explore')?.isRunning).toBe(true)
@@ -563,44 +552,41 @@ test('Now line in the pane: running agents by tier, with their clock (phase and 
 const SURFACES = ['terminal', 'desktop'] as const
 const TALL = { ...PANE.props, scroll: { offset: 0, bodyRows: 80 } }
 
-test('turn headers carry a bar strip of all their entries whatever the filter, from 52 columns, on both surfaces', async ($, on) => {
+test('turn headers keep their duration but carry no bar strip, at any width, on both surfaces', async ($, on) => {
   seed(on, HALL)
-  for (const surface of SURFACES) {
-    const mount = (bodyColumns = 60) => $.ui.mount({ ...PANE, props: { ...TALL, bodyColumns }, surface })
-    const check = async () => {
-      const ui = await mount()
-      if (surface === 'terminal') {
-        const runs = (await ui.findAll({ type: 'Text', text: /^[━─]+$/ }))
-          .filter(t => t.props.color !== undefined)
-          .map(t => `${t.text}${t.props.color === T.dim ? '' : t.props.color}${t.props.dimColor ? '~' : ''}`)
-        // Turn 1 (1..3 ms): its tool, then the reply's one cell over it. Turn 2 (61..66 s): the running agent, its
-        // tool (done) and the main tool (running) over it.
-        expect(runs).toEqual(['──────', `━━━━━${T.aqua}`, `━${T.gold}`, '─', `━${T.violet}~`, `━━${T.aqua}`, `━━━━━━━${T.aqua}~`, `━${T.violet}~`])
-        expect(await ui.find({ type: 'Svg' })).toBeUndefined()
-      } else {
-        const strip = (await ui.findAll({ type: 'Svg' })).find(s => s.props.alt === 'turn 2 timeline')
-        const svg = String(strip?.props.source)
-        expect([strip?.props.width, strip?.props.height]).toEqual([96, 10])
-        expect(svg).toContain(`fill="${T.violet}"`) // the agent
-        expect(svg).toContain('class="live"') // running ones pulse
-        expect(svg).not.toContain(`fill="${T.err}"`) // nothing failed
-      }
-      expect((await ui.find({ key: 'turn:2' }))?.text).toBe('▾ turn 2 · 2 tools · 1 agent') // the label keeps its room
+  for (const surface of SURFACES)
+    for (const bodyColumns of [40, 60, 120]) {
+      const ui = await $.ui.mount({ ...PANE, props: { ...TALL, bodyColumns }, surface })
+      expect((await ui.find({ key: 'turn:2' }))?.text).toBe('▾ turn 2 · 2 tools · 1 agent')
+      expect(await ui.find({ type: 'Text', text: '00:05' })).toBeDefined() // turn 2's time, 61..66 s
+      expect(await ui.find({ type: 'Text', text: /[━─]/ })).toBeUndefined()
+      expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).endsWith('timeline'))).toBe(false)
       await ui.unmount()
     }
-    await check()
-    // Under Main the agent's rows go, its segment stays.
-    let ui = await mount()
-    await ui.press({ key: 'filter:main' })
-    await ui.unmount()
-    await check()
-    ui = await mount()
-    await ui.press({ key: 'filter:all' })
-    await ui.unmount()
-    // Too narrow: no strip.
-    ui = await mount(40)
-    expect(await ui.find({ type: 'Text', text: /━/ })).toBeUndefined()
-    expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).endsWith('timeline'))).toBe(false)
+})
+
+// 150 tool rows in one (open) turn: far more than the 20 body rows the pane has. The Hall draws them all and the pane
+// scrolls natively; no "older"/"newer" counts are left in the stats line.
+const MANY = {
+  ...HALL,
+  sessionLog: Array.from({ length: 150 }, (_, i) => ({
+    id: `m${i}`,
+    at: 1000 + i,
+    kind: 'tool',
+    label: `Read · file${i}.ts`,
+    turn: 1,
+    status: 'done',
+    endedAt: 1001 + i,
+  })),
+}
+
+test('the Hall of Truth draws every process in the log, not a window of it, on both surfaces', async ($, on) => {
+  seed(on, MANY)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60 }, surface })
+    expect((await ui.find({ key: 'turn:1' }))?.text).toBe('▾ turn 1 · 150 tools')
+    for (let i = 0; i < 150; i++) expect(await ui.find({ type: 'Text', text: `Read · file${i}.ts` })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /older|newer/ })).toBeUndefined()
     await ui.unmount()
   }
 })

@@ -454,7 +454,8 @@ test('an agent finishing schedules the redraw that ends its celebration; a main 
   expect(redraws.length).toBe(1)
 })
 
-test('focus: ↗ on a chamber fills the pane with it (Back, Transcript, a two-click Stop); Back returns to the overview', async ($, on) => {
+// Transcript is terminal only: the desktop session draws no main view, so `$.ui.view` could only refuse there.
+test('focus: ↗ on a chamber fills the pane with it (Back, Transcript on the terminal, a two-click Stop); Back returns to the overview', async ($, on) => {
   const { focus } = seed(on, { ...WORK, chamber: '' })
   const viewed: unknown[] = []
   const toasts: string[] = []
@@ -486,9 +487,11 @@ test('focus: ↗ on a chamber fills the pane with it (Back, Transcript, a two-cl
     expect(focus).toEqual(['a1'])
     let ui = await mount()
     expect((await ui.findAll({ type: 'Button' })).map(b => b.key)).toEqual(
-      surface === 'desktop' ? ['temple-back', 'temple-transcript', 'stop:agent:a1'] : ['temple-back', 'temple-transcript', 'stop:agent:a1', 'chamber:a1'],
+      surface === 'desktop' ? ['temple-back', 'stop:agent:a1'] : ['temple-back', 'temple-transcript', 'stop:agent:a1', 'chamber:a1'],
     )
-    expect([(await ui.find({ key: 'temple-back' }))?.text, (await ui.find({ key: 'temple-transcript' }))?.text, (await ui.find({ key: 'stop:agent:a1' }))?.text]).toEqual(['Back', 'Transcript', 'Stop'])
+    expect([(await ui.find({ key: 'temple-back' }))?.text, (await ui.find({ key: 'temple-transcript' }))?.text, (await ui.find({ key: 'stop:agent:a1' }))?.text]).toEqual(
+      ['Back', surface === 'desktop' ? undefined : 'Transcript', 'Stop'],
+    )
     if (surface === 'desktop') {
       const a = await alts(ui)
       expect(a.map(x => x[0])).toEqual(['The Temple: Horus · careful · working', 'Build the Temple: Horus · careful, working, 01:05; doing PowerShell · Run the tests'])
@@ -504,10 +507,14 @@ test('focus: ↗ on a chamber fills the pane with it (Back, Transcript, a two-cl
     await uniqueKeys(ui)
     await ui.unmount()
 
-    // Transcript opens the engine's view of the agent; a refusal is toasted.
-    await press('temple-transcript')
-    expect(viewed).toEqual([{ agentId: 'a1' }])
-    expect(toasts).toEqual(['The Temple: cannot open that agent (no row)'])
+    // Terminal: Transcript opens the engine's view of the agent; a refusal is toasted.
+    if (surface === 'terminal') {
+      await press('temple-transcript')
+      expect(viewed).toEqual([{ agentId: 'a1' }])
+      expect(toasts).toEqual(['The Temple: cannot open that agent (no row)'])
+      toasts.length = 0
+    }
+    expect(toasts).toEqual([])
     // Stop: the first press arms it, the second calls TaskStop.
     await press('stop:agent:a1')
     expect(calls).toEqual([])
@@ -533,13 +540,14 @@ test('focus on a finished agent: its done pose and time, no Stop; on the termina
     raw.chamber = 'a2'
     const ui = await $.ui.mount({ ...TEMPLE, surface })
     expect(await ui.find({ key: 'stop:agent:a2' })).toBeUndefined()
-    expect(await ui.find({ key: 'temple-transcript' })).toBeDefined()
     if (surface === 'desktop') {
+      expect(await ui.find({ key: 'temple-transcript' })).toBeUndefined() // no main view to open on desktop
       const room = (await alts(ui))[1]!
       expect(room[0]).toBe('Task a2: Slave · Explore, finished, 00:03')
       expect(room[1]).toContain('eoh-done')
       expect(room[1]).toContain('No actions yet.')
     } else {
+      expect(await ui.find({ key: 'temple-transcript' })).toBeDefined()
       expect(await ui.find({ type: 'Client' })).toBeUndefined()
       expect(await ui.find({ type: 'Text', text: '00:03' })).toBeDefined()
       await ui.press({ key: 'chamber:a2' })

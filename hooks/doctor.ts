@@ -1,5 +1,6 @@
 // `/horus-doctor`: one line per thing the mod relies on, as it stands in THIS session. Opens no pane.
-import { atom, read } from 'claude-code'
+// `/horus-motion [on|off]`: the mod's own animation switch (the OS reduced-motion setting is not consulted).
+import { atom, read, update } from 'claude-code'
 import type { On } from 'claude-code'
 
 import * as core from './core'
@@ -9,6 +10,13 @@ const ponytail = atom({ plugin: 'eyes-of-horus', key: 'ponytail' } as const, cor
 const sessionLog = atom({ plugin: 'eyes-of-horus', key: 'sessionLog' } as const, core.sessionLog.initial, { shape: core.sessionLog.shape! })
 const agents = atom({ plugin: 'eyes-of-horus', key: 'agents' } as const, core.agents.initial, { shape: core.agents.shape! })
 const progress = atom({ plugin: 'eyes-of-horus', key: 'progress' } as const, core.progress.initial, { shape: core.progress.shape! })
+const motion = atom({ plugin: 'eyes-of-horus', key: 'motion' } as const, core.motion.initial)
+
+/** `/horus-motion`'s argument against the current value: 'on', 'off', '' toggles; anything else is undefined. */
+export const motionArg = (args: string, current: boolean) => {
+  const a = args.trim().toLowerCase()
+  return a === 'on' ? true : a === 'off' ? false : a === '' ? !current : undefined
+}
 
 const PANES = ['horus', 'horus-temple']
 const PROBE_ID = 'horus-doctor-probe'
@@ -46,9 +54,18 @@ export const registerDoctor = (on: On) => {
     on('session.start', { isInteractive }, async ($, e, next) => {
       const started = await next(e)
       await $.command.register({ name: 'horus-doctor', description: 'Say which parts of Eyes of Horus work in this session' }).catch(() => undefined)
+      await $.command.register({ name: 'horus-motion', description: 'Turn the Eyes of Horus animations on or off (no argument toggles)' }).catch(() => undefined)
       return started
     })
   }
+
+  on('command.run', { command: 'horus-motion' }, async ($, e) => {
+    const to = motionArg(e.args, await read($, motion))
+    if (to === undefined) return { text: 'Usage: /horus-motion [on|off]' }
+    await update($, motion, () => to)
+    $.ui.invalidate('ui.render') // every drawing is rebuilt with the new switch
+    return { text: `Motion is ${to ? 'on' : 'off'}.` }
+  })
 
   on('command.run', { command: 'horus-doctor' }, async $ => {
     const checks = await Promise.all([
@@ -58,6 +75,7 @@ export const registerDoctor = (on: On) => {
         return PANES.map(id => `${id} ${paneState(panes, id)}`).join('; ')
       }),
       check('Ponytail flag', async () => (await read($, ponytail)).level),
+      check('Motion', async () => ((await read($, motion)) ? 'on' : 'off (/horus-motion on)')),
       check('Log entries', async () => String((await read($, sessionLog)).length)),
       check('Agents', async () => String((await read($, agents)).length)),
       check('Progress', async () => {

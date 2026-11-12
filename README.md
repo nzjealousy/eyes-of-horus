@@ -29,6 +29,7 @@ In the desktop app, where `/plugin` does not run: click + next to the prompt box
 - `/voiceover [on|off|test]` turns voice-over on or off, or speaks one test line.
 - `/temple` opens the Temple pane.
 - `/horus-eye` reports what the eye is doing and the last drawing fault, if any.
+- `/horus-doctor` reports, one line each, what works in this session: surfaces, panes, the ponytail flag, stored counts, and whether a plugin can call TaskStop (a harmless probe on a fake id).
 
 ## What it changes
 

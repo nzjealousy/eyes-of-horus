@@ -50,6 +50,7 @@ export function stopControls(
   // An agent stops through the TaskStop tool, as the model would stop it. The typed tool-call union is too deep for
   // tsc (TS2589), so the input is cast; the loader wants the call spelled $.tool.call(...) at its site.
   const stopAgent = (agentId: string) => async () => {
+    // @ts-ignore TS2589 (see above), raised at whichever such call tsc checks first, so not @ts-expect-error.
     const r = await ($.tool.call({ tool: 'TaskStop', task_id: agentId } as never) as Promise<unknown> as Promise<StopResult>).catch(
       (err: unknown): StopResult => ({ deny: err instanceof Error ? err.message : String(err) }),
     )

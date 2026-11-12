@@ -223,30 +223,35 @@ function toolLabel(tool: string, args: Readonly<Record<string, unknown>>) {
 export const registerCore = (on: On) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    await refreshPonytail($)
-    const u = await $.session.usage().catch(() => undefined)
-    if (u) {
-      await saveContext($, u.context, u.cost)
-      await update($, usage, x => ({ ...x, startedAt: u.startedAt }))
-    }
+    await safe(async () => {
+      await refreshPonytail($)
+      const u = await $.session.usage().catch(() => undefined)
+      if (u) {
+        await saveContext($, u.context, u.cost)
+        await update($, usage, x => ({ ...x, startedAt: u.startedAt }))
+      }
+    })
     return started
   })
 
+  // Bookkeeping in the hooks below must never stop the engine's own handling: a failure is dropped and next(e) still runs.
   on('turn.start', async ($, e, next) => {
-    const id = e.agentId
-    if (id !== undefined) {
-      // An agent whose spawn this module did not see (a teammate woken by a message) is looked up once.
-      const isKnown = (await read($, agents)).some(a => a.id === id)
-      const info = isKnown ? undefined : (await $.agent.list()).find(a => a.id === id)
-      await addAgent($, id, info?.type ?? 'agent', info?.description ?? '')
-      return next(e)
-    }
-    await update($, turnSeq, n => n + 1)
-    await update($, turnId, () => e.turnId)
-    await setPhase($, 'thinking')
-    // Harness blocks (`<task-notification>`, `<system-reminder>`, ...) arrive as prompts too; they are noise in the rail.
-    const text = e.text.trim()
-    if (text !== '' && !text.startsWith('<')) await log($, 'prompt', firstLine(text))
+    await safe(async () => {
+      const id = e.agentId
+      if (id !== undefined) {
+        // An agent whose spawn this module did not see (a teammate woken by a message) is looked up once.
+        const isKnown = (await read($, agents)).some(a => a.id === id)
+        const info = isKnown ? undefined : (await $.agent.list()).find(a => a.id === id)
+        await addAgent($, id, info?.type ?? 'agent', info?.description ?? '')
+        return
+      }
+      await update($, turnSeq, n => n + 1)
+      await update($, turnId, () => e.turnId)
+      await setPhase($, 'thinking')
+      // Harness blocks (`<task-notification>`, `<system-reminder>`, ...) arrive as prompts too; they are noise in the rail.
+      const text = e.text.trim()
+      if (text !== '' && !text.startsWith('<')) await log($, 'prompt', firstLine(text))
+    })
     return next(e)
   })
 
@@ -290,69 +295,73 @@ export const registerCore = (on: On) => {
   // Every hook hears each response row (an answer without `next` cannot refuse one), so this sees savvy-progress calls
   // whichever plugin sits outermost on tool.call. Rows land per finished block, not per streamed token.
   on('session.append', { door: 'response' }, async ($, e, next) => {
-    const agentId = e.agentId
-    if (agentId !== undefined) {
-      // A worker's own savvy-progress `step` call: its card's progress bar.
-      for (const b of e.message.content) {
-        if (b.type !== 'tool_use' || b.name !== STEP_TOOL || typeof b.input !== 'object' || b.input === null) continue
-        const input = b.input as Record<string, unknown>
-        await saveAgents($, list =>
-          list.map(a => {
-            if (a.id !== agentId) return a
-            const prev = a.steps ?? { done: 0, total: 0, note: '' }
-            return { ...a, steps: { done: count(input.done, 1000) ?? prev.done, total: count(input.total, 1000) ?? prev.total, note: label(input.note) ?? prev.note } }
-          }),
-        )
+    await safe(async () => {
+      const agentId = e.agentId
+      if (agentId !== undefined) {
+        // A worker's own savvy-progress `step` call: its card's progress bar.
+        for (const b of e.message.content) {
+          if (b.type !== 'tool_use' || b.name !== STEP_TOOL || typeof b.input !== 'object' || b.input === null) continue
+          const input = b.input as Record<string, unknown>
+          await saveAgents($, list =>
+            list.map(a => {
+              if (a.id !== agentId) return a
+              const prev = a.steps ?? { done: 0, total: 0, note: '' }
+              return { ...a, steps: { done: count(input.done, 1000) ?? prev.done, total: count(input.total, 1000) ?? prev.total, note: label(input.note) ?? prev.note } }
+            }),
+          )
+        }
+      } else {
+        const blocks = e.message.content
+        if (blocks.some(b => b.type === 'text' && str(b.text)?.trim())) await setPhase($, 'outputting', from => from !== 'idle')
+        for (const b of blocks) {
+          if (b.type !== 'tool_use' || b.name !== PROGRESS_TOOL || typeof b.input !== 'object' || b.input === null) continue
+          const input = b.input as Record<string, unknown>
+          const list = await read($, agents)
+          await update($, progress, prev => withStatus(mergeProgress(prev, input), list))
+        }
       }
-    } else {
-      const blocks = e.message.content
-      if (blocks.some(b => b.type === 'text' && str(b.text)?.trim())) await setPhase($, 'outputting', from => from !== 'idle')
-      for (const b of blocks) {
-        if (b.type !== 'tool_use' || b.name !== PROGRESS_TOOL || typeof b.input !== 'object' || b.input === null) continue
-        const input = b.input as Record<string, unknown>
-        const list = await read($, agents)
-        await update($, progress, prev => withStatus(mergeProgress(prev, input), list))
-      }
-    }
+    })
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
-    const at = await $.clock.now()
-    const used = e.usage
-    const tokens = used ? used.input_tokens + used.output_tokens + used.cache_read_input_tokens + used.cache_creation_input_tokens : 0
-    const id = e.agentId
-    if (id !== undefined) {
-      const status = e.reason === 'answer' ? 'done' : 'failed'
-      await saveAgents($, list =>
-        list.map(a => (a.id === id ? { ...a, status, endedAt: at, tokens: (a.tokens ?? 0) + tokens } : a)),
-      )
-      await endEntry($, `agent:${id}`, status)
-      await update($, usage, u => ({ ...u, tokensTotal: u.tokensTotal + tokens }))
-      return next(e)
-    }
-    // Tools still listed here were cut off with the turn.
-    await update($, inflight, () => [])
-    await update($, turnId, () => '')
-    if (await read($, terminalBusy)) await update($, terminalBusy, () => false)
-    await setPhase($, 'idle')
-    await update($, tail, () => at)
-    const turns = await $.session.turns()
-    await update($, usage, u => ({ ...u, tokensTotal: u.tokensTotal + tokens, agentTimeMs: u.agentTimeMs + e.durationMs, turns }))
-    if (e.answer.trim() !== '') await log($, 'reply', firstLine(e.answer))
-    await refreshPonytail($)
+    await safe(async () => {
+      const at = await $.clock.now()
+      const used = e.usage
+      const tokens = used ? used.input_tokens + used.output_tokens + used.cache_read_input_tokens + used.cache_creation_input_tokens : 0
+      const id = e.agentId
+      if (id !== undefined) {
+        const status = e.reason === 'answer' ? 'done' : 'failed'
+        await saveAgents($, list =>
+          list.map(a => (a.id === id ? { ...a, status, endedAt: at, tokens: (a.tokens ?? 0) + tokens } : a)),
+        )
+        await endEntry($, `agent:${id}`, status)
+        await update($, usage, u => ({ ...u, tokensTotal: u.tokensTotal + tokens }))
+        return
+      }
+      // Tools still listed here were cut off with the turn.
+      await update($, inflight, () => [])
+      await update($, turnId, () => '')
+      if (await read($, terminalBusy)) await update($, terminalBusy, () => false)
+      await setPhase($, 'idle')
+      await update($, tail, () => at)
+      const turns = await $.session.turns()
+      await update($, usage, u => ({ ...u, tokensTotal: u.tokensTotal + tokens, agentTimeMs: u.agentTimeMs + e.durationMs, turns }))
+      if (e.answer.trim() !== '') await log($, 'reply', firstLine(e.answer))
+      await refreshPonytail($)
+    })
     return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
-    await saveContext($, e.context, e.cost)
+    await safe(() => saveContext($, e.context, e.cost))
     return next(e)
   })
 
   // `/ponytail <level>` (typed, or a plugin's $.command.run) writes the flag before the command runs.
   on('command.run', { command: ['ponytail', 'ponytail:ponytail'] }, async ($, e, next) => {
     const ran = await next(e)
-    await refreshPonytail($)
+    await safe(() => refreshPonytail($))
     return ran
   })
 }

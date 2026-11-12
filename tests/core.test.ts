@@ -46,8 +46,9 @@ function engine(on: On, flag: string | null = 'lite\n', failKey?: string) {
   mock.env(on, { HOME: '/home/u' })
   on('tool.call', async (_, e) => {
     inTool.push(peek())
-    if (e.tool === 'Slow') await clock.advance(250)
-    if (e.tool === 'Boom') throw new Error('tool blew up')
+    // Test-only tool names outside the typed union: compared as strings.
+    if (String(e.tool) === 'Slow') await clock.advance(250)
+    if (String(e.tool) === 'Boom') throw new Error('tool blew up')
     return { result: {} }
   })
   on('fs.read', () => (flag === null ? { deny: 'ENOENT' } : { value: flag }))
@@ -278,6 +279,19 @@ test('a failing state write does not stop the tool call', async ($, on) => {
   const { inTool } = engine(on, 'lite\n', 'inflight')
   await callTool($, { tool: 'Read', file_path: 'a.ts' })
   expect(inTool.length).toBe(1) // the tool ran
+})
+
+// The engine also skips a throwing hook (fails open), so these pin the contract (next's answer comes back), not safe().
+test('a failing state write does not block turn.start', async ($, on) => {
+  engine(on, 'lite\n', 'turnSeq')
+  expect(await $.turn.start({ text: 'go', turnId: 't1' })).toMatchObject({ turnId: 't1' })
+})
+
+test('a failing state write does not block turn.complete', async ($, on) => {
+  engine(on, 'lite\n', 'inflight')
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  const done = await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', usage: USAGE })
+  expect(done).toMatchObject({ text: 'ok' })
 })
 
 test('sessionLog keeps the newest 400 entries', { timeoutMs: 120000 }, async ($, on) => {

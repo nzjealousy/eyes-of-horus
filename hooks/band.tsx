@@ -89,7 +89,7 @@ export function ctxCells(pct: number, width: number): [string, string] {
 type Seg = { tier: string; status: HorusTaskStatus }
 const segments = (p: HorusProgress): Seg[] =>
   p.tasks.length > 0 ? p.tasks : Array.from({ length: p.total }, (_, i) => ({ tier: '', status: i < p.done ? 'done' : 'pending' }))
-const segColor = (s: Seg) => (s.status === 'failed' ? err : (Object.hasOwn(tierColor, s.tier) ? tierColor[s.tier] : dim))
+const segColor = (s: Seg) => (s.status === 'failed' ? err : (Object.hasOwn(tierColor, s.tier) ? (tierColor[s.tier] ?? dim) : dim))
 
 // Terminal: one cell-run per task in `width` cells, a one-cell gap between runs when there is room.
 // Done and failed are solid, running is solid but dim, pending is the light track.

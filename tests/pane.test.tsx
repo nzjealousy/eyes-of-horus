@@ -517,12 +517,12 @@ test('Now line in the pane: running agents by tier, with their clock (phase and 
   const log = HALL.sessionLog.filter(l => l.id !== 'tu2')
   seed(on, { ...HALL, sessionLog: log })
   // 60 columns: the Now line's text gets W less the clock and the Stop slot.
-  let ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60 }, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60 }, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /◈ 1 agent running · careful/ })).toBeDefined()
   await ui.unmount()
-  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(String((await ui.findAll({ type: 'Svg' })).at(-1)?.props.alt)).toBe('◈ 1 agent running · careful · 00:04')
-  await ui.unmount()
+  const app = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(String((await app.findAll({ type: 'Svg' })).at(-1)?.props.alt)).toBe('◈ 1 agent running · careful · 00:04')
+  await app.unmount()
 })
 
 const SURFACES = ['terminal', 'desktop'] as const

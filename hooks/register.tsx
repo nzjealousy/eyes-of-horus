@@ -2,6 +2,7 @@ import type { Register } from 'claude-code'
 
 import { registerBand } from './band'
 import { registerCore } from './core'
+import { registerDoctor } from './doctor'
 import { registerEye } from './eye'
 import { registerPane } from './pane'
 import { registerTemple } from './temple'
@@ -13,4 +14,5 @@ export const register: Register = on => {
   registerPane(on)
   registerTemple(on)
   registerEye(on)
+  registerDoctor(on)
 }

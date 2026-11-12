@@ -109,6 +109,8 @@ declare module 'claude-code' {
       hallOpen: Shaped<number[]>
       /** Written by the pane only: the Stop Button awaiting its confirming press ('turn', `agent:<agentId>`), '' none. */
       armedStop: string
+      /** Written by the pane only: the agent id whose chamber the Temple focuses, '' for the overview. */
+      chamber: string
     }
   }
 }

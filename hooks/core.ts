@@ -50,6 +50,8 @@ export const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as
 export const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, [], { shape: 'hall-open-1' })
 /** The Stop Button pressed once and awaiting its confirming press: 'turn', `agent:<agentId>`, or ''. Written by the pane. */
 export const armedStop = atom({ plugin: 'eyes-of-horus', key: 'armedStop' } as const, '')
+/** The agent id whose chamber the Temple focuses, '' for the overview (see hall.ts focusChamber). Written by the pane. */
+export const chamber = atom({ plugin: 'eyes-of-horus', key: 'chamber' } as const, '')
 
 export const LOG_CAP = 400
 const AGENT_TOOL_CAP = 30

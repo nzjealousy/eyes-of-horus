@@ -1,9 +1,24 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { HorusLogEntry } from '../types'
-import { barRuns, barSegments, disarmStop, hallLines, headLabel, isTurnOpen, matches, nowLine, pressStop, rowDuration, toggleTurn } from '../hooks/hall'
+import type { HorusAgent, HorusLogEntry, HorusProgress } from '../types'
+import {
+  agentFeed,
+  barRuns,
+  barSegments,
+  disarmStop,
+  focusChamber,
+  hallLines,
+  headLabel,
+  isTurnOpen,
+  matches,
+  nowLine,
+  pressStop,
+  rowDuration,
+  templeModel,
+  toggleTurn,
+} from '../hooks/hall'
 import type { HallHead, HallLine } from '../hooks/hall'
-import { railEntries, railWindow, scrollOffset } from '../hooks/pane'
+import { railEntries, railWindow, roster, scrollOffset, tierOf } from '../hooks/pane'
 import * as T from '../hooks/theme'
 
 const E = (id: string, turn: number, kind: HorusLogEntry['kind'], at: number, extra: Partial<HorusLogEntry> = {}): HorusLogEntry => ({
@@ -131,4 +146,88 @@ test('stop arming: a first press arms, the same key confirms, another key re-arm
   expect(pressStop('turn', 'agent:a1')).toEqual({ armed: 'agent:a1', fire: false })
   expect(pressStop('agent:a1', 'agent:a2')).toEqual({ armed: 'agent:a2', fire: false })
   expect([disarmStop('turn', 'turn'), disarmStop('agent:a1', 'turn'), disarmStop('', 'turn')]).toEqual(['', 'agent:a1', ''])
+})
+
+test('agent feed: only that agent tools, oldest first, newest cap kept, older counted, running flagged', async () => {
+  const f = agentFeed(LOG, 'a1')
+  expect(f.items).toEqual([
+    { id: 's1', label: 's1', status: 'failed', dur: '00:00', running: false },
+    { id: 's2', label: 's2', status: 'running', dur: '…', running: true },
+  ])
+  expect(f.older).toBe(0)
+  const many = Array.from({ length: 15 }, (_, i) => E(`x${i}`, 1, 'tool', i, { status: 'done', endedAt: i, agentId: 'b' }))
+  const g = agentFeed([...LOG, ...many], 'b', 12)
+  expect([g.items.length, g.items[0]?.id, g.items.at(-1)?.id, g.older]).toEqual([12, 'x3', 'x14', 3])
+  expect(agentFeed(LOG, 'nobody')).toEqual({ items: [], older: 0 })
+})
+
+const A = (id: string, type: string, extra: Partial<HorusAgent> = {}): HorusAgent => ({ id, type, title: id, status: 'running', startedAt: 0, ...extra })
+const temple = (agents: HorusAgent[], now = 100_000, progress: HorusProgress | null = null) => {
+  const { gods, slaves } = roster(agents)
+  return templeModel({ agents, progress, members: [...gods, ...slaves], tierOf, now })
+}
+const keys = (ms: readonly { key: string }[]) => ms.map(m => m.key)
+
+test('temple: no agents leaves every member idle in roster order, no chambers', async () => {
+  const m = temple([])
+  const { gods, slaves } = roster([])
+  expect(keys(m.hall.idle)).toEqual(keys([...gods, ...slaves]))
+  expect(keys(m.hall.idle).slice(0, 5)).toEqual(['fable', 'heavy', 'careful', 'medium', 'light'])
+  expect([m.hall.celebrating, m.chambers, m.more]).toEqual([[], [], 0])
+})
+
+test('temple: a running god gets a chamber and leaves the idle list; two of one type get two chambers, newest first', async () => {
+  const one = temple([A('g1', 'savvy-flow:savvy-careful', { startedAt: 5, tokens: 1200, steps: { done: 1, total: 4, note: 'tests' } })])
+  expect(one.chambers).toEqual([
+    { id: 'g1', key: 'careful', type: 'savvy-flow:savvy-careful', tier: 'careful', title: 'g1', steps: { done: 1, total: 4, note: 'tests' }, startedAt: 5, tokens: 1200 },
+  ])
+  expect(keys(one.hall.idle).includes('careful')).toBe(false)
+  expect(keys(one.hall.idle).includes('medium')).toBe(true)
+  const two = temple([A('e1', 'Explore', { startedAt: 10 }), A('e2', 'Explore', { startedAt: 20 })])
+  expect(two.chambers.map(c => [c.id, c.key, c.tier, c.tokens])).toEqual([
+    ['e2', 'slave:Explore', undefined, 0],
+    ['e1', 'slave:Explore', undefined, 0],
+  ])
+  expect(keys(two.hall.idle).includes('slave:Explore')).toBe(false)
+})
+
+test('temple: a finished agent celebrates for celebrateMs then stands idle; a failed one is flagged', async () => {
+  const done = [A('d1', 'savvy-medium', { status: 'done', endedAt: 95_000 }), A('f1', 'Plan', { status: 'failed', endedAt: 99_000 })]
+  const now = temple(done, 100_000)
+  expect(now.hall.celebrating).toEqual([
+    { id: 'f1', key: 'slave:Plan', type: 'Plan', title: 'f1', failed: true },
+    { id: 'd1', key: 'medium', type: 'savvy-medium', tier: 'medium', title: 'd1', failed: false },
+  ])
+  expect(keys(now.hall.idle).some(k => k === 'medium' || k === 'slave:Plan')).toBe(false)
+  expect(now.chambers).toEqual([])
+  const later = temple(done, 101_000) // d1 ended 6 s ago: back in the hall; f1 still celebrates
+  expect(later.hall.celebrating.map(c => c.id)).toEqual(['f1'])
+  expect(keys(later.hall.idle).includes('medium')).toBe(true)
+})
+
+test('temple: at most 8 chambers, newest first, the rest counted in more', async () => {
+  const many = Array.from({ length: 11 }, (_, i) => A(`a${i}`, 'general-purpose', { startedAt: i }))
+  const m = temple(many)
+  expect([m.chambers.length, m.chambers[0]?.id, m.chambers.at(-1)?.id, m.more]).toEqual([8, 'a10', 'a3', 3])
+})
+
+test('temple: a task tier and the agent steps carry into the chamber; an unknown type gets a slave chamber', async () => {
+  const p: HorusProgress = { title: 'T', total: 1, done: 0, phase: '', finished: false, tasks: [{ title: 'Fix it', tier: 'heavy', after: [], status: 'running' }] }
+  const m = temple([A('u1', 'my-plugin:odd-worker', { title: 'Fix it', steps: { done: 2, total: 3, note: 'n' } }), A('u2', 'mystery')], 100_000, p)
+  expect(m.chambers.map(c => [c.id, c.key, c.tier, c.steps?.done])).toEqual([
+    ['u2', 'slave:mystery', undefined, undefined],
+    ['u1', 'slave:my-plugin:odd-worker', 'heavy', 2],
+  ])
+  // Seen unknown types join the roster as slaves and are running, so they are not idle.
+  expect(keys(m.hall.idle).some(k => k === 'slave:mystery')).toBe(false)
+})
+
+test('chamber focus: open one, press it again to close, another replaces, empty clears', async () => {
+  expect([focusChamber('', 'a1'), focusChamber('a1', 'a1'), focusChamber('a1', 'a2'), focusChamber('a2', ''), focusChamber('', '')]).toEqual([
+    'a1',
+    '',
+    'a2',
+    '',
+    '',
+  ])
 })

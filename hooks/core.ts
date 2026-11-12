@@ -45,6 +45,9 @@ export const paneCollapsed = atom(
 
 /** Hall of Truth entries scrolled back from the newest; 0 follows the newest. Written by the pane. */
 export const railOffset = atom({ plugin: 'eyes-of-horus', key: 'railOffset' } as const, 0)
+/** The Hall of Truth's filter chip and the user's turn fold marks (see hall.ts isTurnOpen). Written by the pane. */
+export const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const, 'all')
+export const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, [], { shape: 'hall-open-1' })
 
 export const LOG_CAP = 400
 const AGENT_TOOL_CAP = 30
@@ -206,7 +209,10 @@ async function refreshPonytail($: $) {
 function toolLabel(tool: string, args: Readonly<Record<string, unknown>>) {
   // A shell command can carry secrets: shells show their description only.
   const keys = SHELLS.includes(tool) ? ['description'] : ['description', 'command', 'file_path', 'pattern', 'url', 'query']
-  const detail = keys.map(k => str(args[k])).find(Boolean)
+  const key = keys.find(k => str(args[k]))
+  const raw = key === undefined ? undefined : str(args[key])
+  // A path's start says nothing at 60 columns: a file shows its name only.
+  const detail = key === 'file_path' ? raw?.split(/[\\/]/).pop() : raw
   return detail ? `${tool} · ${firstLine(detail, 60)}` : tool
 }
 

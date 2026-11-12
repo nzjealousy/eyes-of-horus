@@ -246,6 +246,15 @@ test('log labels lose control characters and credentials; shells log their descr
   expect(log).toEqual(['prompt:use  [31mred [0m token=*** now', 'tool:Bash', 'tool:Bash · List files', 'tool:WebFetch · https://***@host.dev/a'])
 })
 
+test('a file path logs as its basename, still cleaned and redacted', async ($, on) => {
+  const { peek } = engine(on)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await callTool($, { tool: 'Read', file_path: 'C:\\Users\\u\\Documents\\vault\\Projects\\Eyes of Horus\\Tasks-ToDo.md' })
+  await callTool($, { tool: 'Edit', file_path: '/home/u/a very long directory name/that goes/on/token=abc\u001b.ts' })
+  await callTool($, { tool: 'Grep', pattern: 'x/y/z' }) // other keys keep their whole text
+  expect(peek().sessionLog.slice(1).map(l => l.label)).toEqual(['Read · Tasks-ToDo.md', 'Edit · token=*** .ts','Grep · x/y/z'])
+})
+
 test('only savvy-flow agents get the terse prompt prefix', async ($, on) => {
   engine(on)
   const spawn = (subagentType: string) =>

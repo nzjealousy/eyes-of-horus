@@ -1,10 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { HorusAgent, HorusLogEntry, HorusLogKind, HorusProgress, HorusTaskStatus, HorusUsage } from '../types'
+import type { HorusAgent, HorusLogKind, HorusProgress, HorusTaskStatus, HorusUsage } from '../types'
 import { fmtElapsed } from './clients/agent-clock'
 import * as core from './core'
 import { GOD_H, GOD_TIERS, GOD_W, godGlyph, godName, godSvg, slaveKey } from './gods'
+import { FILTER_LABEL, HALL_FILTERS, hallLines, headLabel, newestTurn, nowLine, toggleTurn } from './hall'
+import type { HallHead, HallRow } from './hall'
 import * as T from './theme'
 
 const PANE = 'horus'
@@ -19,6 +21,10 @@ const paneCollapsed = atom({ plugin: 'eyes-of-horus', key: 'paneCollapsed' } as 
   shape: core.paneCollapsed.shape!,
 })
 const railOffset = atom({ plugin: 'eyes-of-horus', key: 'railOffset' } as const, core.railOffset.initial)
+const phase = atom({ plugin: 'eyes-of-horus', key: 'phase' } as const, core.phase.initial)
+const phaseSince = atom({ plugin: 'eyes-of-horus', key: 'phaseSince' } as const, core.phaseSince.initial)
+const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const, core.hallFilter.initial)
+const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, core.hallOpen.initial, { shape: core.hallOpen.shape! })
 
 export const PANE_TITLE = 'The Field of Reeds (Aaru)'
 export const GODS_LABEL = 'Gods'
@@ -40,7 +46,8 @@ export type Card = {
 
 export const trunc = (s: string, n: number) => (n <= 0 ? '' : s.length <= n ? s : s.slice(0, n - 1) + '…')
 
-export const railWindow = (log: readonly HorusLogEntry[], n: number) => log.slice(-Math.max(1, n))
+/** The `n` display lines shown when scrolled `off` lines back from the newest. */
+export const railWindow = <L,>(lines: readonly L[], n: number, off = 0) => lines.slice(Math.max(0, lines.length - off - Math.max(1, n)), lines.length - off)
 
 // `savvy-careful` or `savvy-flow:savvy-careful` -> `careful`; anything else has no tier.
 export const tierOf = (type: string): string | undefined => {
@@ -505,13 +512,32 @@ export function rosterSvg(W: number, members: readonly Member[], gridY = 0, smal
   return { svg: svgDoc(W, h, gridY, body.join('')), h }
 }
 
-// The Hall of Truth scrolls itself: a wheel over it moves `railOffset` (entries back from the newest) and the pane's
-// own window stays put, so the Gods above it never move. Where it starts is kept from the last draw.
-// shortcut: module state, reset by a hot reload until the next draw; a desktop row is taken as ~20 px tall.
+// The Hall of Truth scrolls itself: a wheel over it moves `railOffset` (display lines, turn headers and rows, back
+// from the newest) and the pane's own window stays put, so the Gods above it never move. Where it starts is kept from
+// the last draw. shortcut: module state, reset by a hot reload until the next draw; a desktop row is taken as ~20 px
+// tall (the Gods' Svgs are counted in it, and the desktop Now line is drawn exactly one such row tall).
 const DESKTOP_ROW_PX = 20
 const hall = { top: 0, entries: 1, total: 0 }
-/** Entries the rail shows in `rows` rows (each entry after the first adds its │ connector). */
-export const railEntries = (rows: number) => Math.max(1, Math.floor((rows + 1) / 2))
+/** Display lines the Hall shows in `rows` rows: one row each (headers and entries alike). */
+export const railEntries = (rows: number) => Math.max(1, Math.floor(rows))
+
+/** The desktop Gods' drawing width for `cols` body columns. */
+const svgWidth = (cols: number) => Math.max(240, Math.min(900, cols * 8 - 8))
+/** Terminal columns and desktop pixels kept free at the Now line's right end for T3's "Stop turn" Button. */
+export const STOP_COLS = 11
+export const STOP_PX = 88
+/** The desktop Now line: its text, then its clock (ticking from `ms` when given), clear of the Stop corner. */
+export const nowSvg = (W: number, label: string, ms?: number) => {
+  const H = DESKTOP_ROW_PX
+  const clock = ms === undefined ? { svg: '', w: 0 } : clockSvg(W - STOP_PX, 14, 12, { status: 'running', ms }, T.aqua)
+  const line = fitText(label, 12, W - STOP_PX - clock.w - (clock.w > 0 ? 8 : 0))
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${CSS}` +
+    text(0, 14, 12, xml(line), ` fill="${T.aqua}"`) +
+    clock.svg +
+    '</svg>'
+  )
+}
 /** The offset after a wheel move of `by` rows (positive toward the newest), clamped to the log. */
 export const scrollOffset = (offset: number, by: number, total: number, entries: number) =>
   Math.max(0, Math.min(Math.max(0, total - entries), offset - Math.round(by)))
@@ -561,7 +587,7 @@ export const registerPane = (on: On) => {
     const ui = $.ui.resolve(e)
     const { Box, Text, Button, Client } = ui
     const W = Math.max(20, e.props.bodyColumns)
-    const [list, flow, log, use, folded, offset, now] = await Promise.all([
+    const [list, flow, log, use, folded, offset, now, ph, phSince, filter, marks] = await Promise.all([
       read($, agents),
       read($, progress),
       read($, sessionLog),
@@ -569,6 +595,10 @@ export const registerPane = (on: On) => {
       read($, paneCollapsed),
       read($, railOffset),
       $.clock.now(),
+      read($, phase),
+      read($, phaseSince),
+      read($, hallFilter),
+      read($, hallOpen),
     ])
     const cards = buildCards(list, flow, now)
     const godCards = cards.filter(c => c.tier !== undefined)
@@ -593,7 +623,7 @@ export const registerPane = (on: On) => {
     const desktopTop = () => {
       if (e.surface !== 'desktop' || !('Svg' in ui)) return undefined
       const { Svg } = ui
-      const SW = Math.max(240, Math.min(900, W * 8 - 8))
+      const SW = svgWidth(W)
       let y = 0 // each drawing's offset down the section, which phases its patch of the grid
       const at = (h: number) => (y += h) - h
       const headH = folded.agents ? HEAD_FOLD_H : HEAD_H
@@ -752,16 +782,107 @@ export const registerPane = (on: On) => {
       }
     }
 
-    // --- The Hall of Truth: a folding header, the one-line stats, and its own window over the log.
+    // --- The Hall of Truth: a folding header, the Now line, the filter chips, the one-line stats, and its own window
+    // over the display lines (turn headers and entry rows).
     const top = desktopTop() ?? terminalTop()
-    const railTop = top.rows + 3 // the blank row, the header and the stats line
+    const railTop = top.rows + 5 // the blank row, the header, the Now line, the filter chips and the stats line
     const entries = railEntries(Math.max(8, e.props.scroll.bodyRows - railTop))
-    const off = Math.min(offset, Math.max(0, log.length - entries))
-    const rail = log.slice(Math.max(0, log.length - off - entries), log.length - off)
+    const lines = hallLines(log, filter, marks, now)
+    const off = Math.min(offset, Math.max(0, lines.length - entries))
+    const rail = railWindow(lines, entries, off)
     hall.top = railTop
     hall.entries = entries
-    hall.total = log.length
-    const older = log.length - off - rail.length
+    hall.total = folded.session ? 0 : lines.length
+    const older = lines.length - off - rail.length
+
+    // An agent's tag: its god tier, else its short type; undefined for an id the agents list no longer holds.
+    const agentType = (id: string) => list.find(a => a.id === id)?.type
+    const tagOf = (id: string) => {
+      const type = agentType(id)
+      return type === undefined ? undefined : (tierOf(type) ?? shortType(type))
+    }
+    const tagColor = (id: string) => {
+      const type = agentType(id)
+      const tier = type === undefined ? undefined : tierOf(type)
+      return tier === undefined ? SLAVE_COLOR : tierColorOf(tier)
+    }
+    const nowInfo = nowLine(log, ph, phSince, tagOf)
+    const nowMs = nowInfo.since === undefined ? undefined : Math.max(0, now - nowInfo.since)
+    const nowRow =
+      e.surface === 'desktop' && 'Svg' in ui ? (
+        // T3 lays its "Stop turn" Button over the drawing's right STOP_PX, kept clear.
+        <ui.Svg
+          key="hall-now"
+          source={nowSvg(svgWidth(W), nowInfo.text, nowMs)}
+          alt={nowMs === undefined ? nowInfo.text : `${nowInfo.text} · ${fmtElapsed(nowMs)}`}
+          width={svgWidth(W)}
+          height={DESKTOP_ROW_PX}
+        />
+      ) : (
+        <Box key="hall-now" flexDirection="row" width={W}>
+          <Box flexGrow={1}>
+            <Text color={T.aqua} wrap="truncate-end">
+              {trunc(nowInfo.text + (nowMs === undefined ? '' : ' · '), W - STOP_COLS - (nowMs === undefined ? 0 : 8))}
+            </Text>
+          </Box>
+          {nowMs !== undefined && <Client key="clock:now" module="./clients/agent-clock.tsx" props={{ ms: nowMs, at: now, color: T.aqua }} />}
+          {/* T3: the "Stop turn" Button goes in this reserved slot. */}
+          <Box key="stop-slot" width={STOP_COLS} />
+        </Box>
+      )
+
+    const setFilter = async (f: typeof filter) => {
+      await update($, hallFilter, () => f)
+      await update($, railOffset, () => 0)
+    }
+    const filters = (
+      <Box key="hall-filters" flexDirection="row">
+        {HALL_FILTERS.flatMap((f, i) => [
+          ...(i > 0 ? [<Text key={`sep:${f}`} dimColor>{' · '}</Text>] : []),
+          <Button key={`filter:${f}`} plain onPress={() => setFilter(f)}>
+            <Text color={f === filter ? T.gold : T.dim} bold={f === filter}>
+              {FILTER_LABEL[f]}
+            </Text>
+          </Button>,
+        ])}
+      </Box>
+    )
+
+    const newest = newestTurn(log)
+    const headNode = (hd: HallHead) => {
+      const dur = fmtElapsed(hd.ms)
+      return (
+        <Box key={`head:${hd.turn}`} flexDirection="row" width={W}>
+          <Box flexGrow={1}>
+            <Button key={`turn:${hd.turn}`} plain onPress={() => update($, hallOpen, m => toggleTurn(m, hd.turn, newest))}>
+              <Text color={T.gold}>{trunc(headLabel(hd), W - dur.length - 1)}</Text>
+            </Button>
+          </Box>
+          {/* T3: the per-turn bar strip goes here, between the header's text and its time. */}
+          <Text dimColor>{dur}</Text>
+        </Box>
+      )
+    }
+    const rowNode = (r: HallRow, i: number) => {
+      const x = r.entry
+      const [glyph, color] = KIND[x.kind]
+      const tag = r.sub && x.agentId !== undefined ? tagOf(x.agentId) : undefined
+      const lead = r.sub ? '  ' : ''
+      const status = x.status === undefined ? '' : `${GLYPH[x.status]} `
+      const tagText = tag === undefined ? '' : `${trunc(tag, 10)} `
+      const room = W - lead.length - 2 - status.length - tagText.length - (r.dur ? r.dur.length + 1 : 0)
+      return (
+        <Box key={`row:${i}:${x.id}`} flexDirection="row" width={W}>
+          <Text color={color}>{`${lead}${glyph} `}</Text>
+          {x.status === undefined ? null : <Text color={STATUS_COLOR[x.status]}>{status}</Text>}
+          {tagText === '' ? null : <Text color={tagColor(x.agentId!)}>{tagText}</Text>}
+          <Box flexGrow={1}>
+            <Text color={T.text}>{trunc(x.label, room)}</Text>
+          </Box>
+          {r.dur === '' ? null : <Text dimColor>{r.dur}</Text>}
+        </Box>
+      )
+    }
     const chips = trunc(
       `turns ${use.turns} · ${fmtElapsed(sessionMs(use, now))} · ctx ${Math.round(use.contextPct)}%` +
         (older > 0 ? ` · ↑${older} older` : '') +
@@ -778,21 +899,16 @@ export const registerPane = (on: On) => {
             {folded.session ? '▸' : '▾'} {HALL_LABEL}
           </Text>
         </Button>
+        {nowRow}
+        {folded.session ? null : filters}
         <Text dimColor>{chips}</Text>
-        {folded.session ? null : rail.length === 0 ? (
-          <Text dimColor>Nothing yet: send a prompt.</Text>
-        ) : (
-          rail.flatMap((r, i) => {
-            const [glyph, color] = KIND[r.kind]
-            const node = (
-              <Box flexDirection="row">
-                <Text color={color}>{glyph} </Text>
-                <Text color={T.text}>{trunc(r.label, W - 2)}</Text>
-              </Box>
-            )
-            return i === 0 ? [node] : [<Text color={T.purple}>│</Text>, node]
-          })
-        )}
+        {folded.session
+          ? null
+          : log.length === 0
+            ? <Text dimColor>Nothing yet: send a prompt.</Text>
+            : rail.length === 0
+              ? <Text dimColor>Nothing under this filter.</Text>
+              : rail.map((l, i) => (l.kind === 'head' ? headNode(l) : rowNode(l, i)))}
       </Box>
     )
   })

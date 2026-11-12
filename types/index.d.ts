@@ -73,6 +73,9 @@ export type HorusLogEntry = {
   agentId?: string
 }
 
+/** The Hall of Truth's filter chips. */
+export type HorusHallFilter = 'all' | 'main' | 'agents' | 'tools'
+
 /** A main-loop tool call in flight (core-internal bookkeeping for `phase` and `terminalBusy`). */
 export type HorusInflight = { id: string; tool: string }
 
@@ -100,6 +103,10 @@ declare module 'claude-code' {
       paneCollapsed: Shaped<{ session: boolean; agents: boolean }>
       /** Written by the pane only: Hall of Truth entries scrolled back from the newest (0 = follow). */
       railOffset: number
+      /** Written by the pane only: the Hall of Truth's filter chip. */
+      hallFilter: HorusHallFilter
+      /** Written by the pane only: turns the user folded by hand; n >= 0 opened turn n, n < 0 closed turn -n-1. */
+      hallOpen: Shaped<number[]>
     }
   }
 }

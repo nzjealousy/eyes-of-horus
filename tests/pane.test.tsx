@@ -221,7 +221,8 @@ function seed(on: On, values: Record<string, unknown>) {
   const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-1', sessionLog: 'log-2', usage: 'usage-1' }
   on('state.get', (_, e, next) => {
     const shape = shapes[e.key]
-    if (shape === undefined) return next(e)
+    // An unshaped key (phase, phaseSince) is seeded raw when given; otherwise the kit's store answers.
+    if (shape === undefined) return e.key in values ? { value: { value: values[e.key], version: 1 } } : next(e)
     if (!(e.key in values)) return { value: { value: undefined, version: 0 } }
     return { value: { value: { shape, value: values[e.key] }, version: 1 } }
   })
@@ -259,7 +260,8 @@ test('the pane draws cards and the rail, and a press opens the agent, on every s
     const ui = await $.ui.mount({ ...PANE, surface })
     expect((await ui.find({ type: 'Text', text: /turns 3 · 02:05 · ctx 42%/ }))?.text).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeDefined()
-    expect((await ui.findAll({ type: 'Text', text: '│' })).length).toBe(2)
+    // Compact rows: no │ connector rows between entries (there used to be 2 for these 3 entries).
+    expect((await ui.findAll({ type: 'Text', text: '│' })).length).toBe(0)
     if (surface === 'terminal') {
       expect((await ui.find({ type: 'Text', text: /^00:03$/ }))?.text).toBe('00:03')
       // Running card ticks in its Client: 65s at render, then +2 ticks.
@@ -271,7 +273,8 @@ test('the pane draws cards and the rail, and a press opens the agent, on every s
       const alts = (await ui.findAll({ type: 'Svg' })).map(s => [String(s.props.alt), String(s.props.source)] as const)
       expect(alts.find(([a]) => a.startsWith('Done task'))?.[0]).toContain(', 00:03')
       expect(alts.find(([a]) => a.startsWith('Build the very long'))?.[1]).toContain('animation-delay:-65s')
-      expect(await ui.find({ type: 'Text', text: /^\d\d:\d\d$/ })).toBeUndefined()
+      // The Hall's turn header and Read row now carry their own times as Text, on purpose; the cards' (00:03, 01:05) stay in their Svgs.
+      expect((await ui.findAll({ type: 'Text', text: /^\d\d:\d\d$/ })).map(t => t.text)).toEqual(['00:00', '00:00'])
       expect(await ui.find({ type: 'Client' })).toBeUndefined()
     }
     // The open control draws only its arrow (a desktop draws a Button's label as text).
@@ -301,7 +304,9 @@ test('desktop: header tiles, grid, one Svg per card, groups and a planned card; 
   for (const s of svgs) expect(String(s.props.source).length).toBeLessThan(131072)
   for (const label of ['Running · 1', 'Finished · 1', 'Planned · 1']) expect(alts).toContain(label)
   // Rows stack down one grid: each drawing's pattern is phased by the heights above it (header 78, roster 60, head 24, card 78, plan 46).
-  expect(svgs.map(s => /<pattern id="d" y="(-?\d+)"/.exec(String(s.props.source))?.[1])).toEqual(['0', '-14', '-10', '-2', '0', '-8', '-6', '-14', '-12', '-4'])
+  // The last Svg is the Hall's Now line, which is off the grid (no pattern).
+  expect(svgs.map(s => /<pattern id="d" y="(-?\d+)"/.exec(String(s.props.source))?.[1])).toEqual(['0', '-14', '-10', '-2', '0', '-8', '-6', '-14', '-12', '-4', undefined])
+  expect(String(svgs.at(-1)?.props.alt)).toBe('◈ idle')
   await desk.unmount()
 
   const term = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -412,11 +417,101 @@ test('bars fill from step reports; the Hall of Truth scrolls within the log; the
   expect(svg).toContain('Tasks 5/7')
   expect(svg).toContain('71%')
   expect(svg).toContain('Rewriting BALANCE.md')
-  expect(railEntries(9)).toBe(5)
+  // Compact rows: one display line per row (no │ connectors any more, which used to halve this to 5).
+  expect(railEntries(9)).toBe(9)
   // A wheel up (negative) goes back in time, never past the oldest; down returns to following the newest.
   expect([scrollOffset(0, -3, 20, 5), scrollOffset(14, -3, 20, 5), scrollOffset(2, 5, 20, 5), scrollOffset(0, -3, 4, 5)]).toEqual([3, 15, 0, 0])
   const r = roster([A('x', 'look', 'running', undefined, 'Explore'), A('y', 'odd', 'done', 2, 'my-plugin:helper')])
   expect(r.gods.map(m => m.name)).toEqual(['Ra', 'Anubis', 'Horus', 'Thoth', 'Bastet'])
   expect(r.slaves.find(m => m.name === 'Explore')?.isRunning).toBe(true)
   expect(r.slaves.some(m => m.name === 'helper')).toBe(true) // a type seen this session joins the workers
+})
+
+const HALL = {
+  ...SEEDED,
+  phase: 'tool',
+  phaseSince: 60_000,
+  sessionLog: [
+    ...SEEDED.sessionLog,
+    { id: 'prompt:2:61000', at: 61_000, kind: 'prompt', label: 'go on', turn: 2 },
+    { id: 'agent:a1', at: 61_500, kind: 'agent', label: 'Build', turn: 2, status: 'running', agentId: 'a1' },
+    { id: 'sub1', at: 62_000, kind: 'tool', label: 'Read · Tasks-ToDo.md', turn: 2, status: 'done', endedAt: 64_000, agentId: 'a1' },
+    { id: 'tu2', at: 63_000, kind: 'tool', label: 'Bash · List files', turn: 2, status: 'running' },
+  ],
+}
+
+test('Hall of Truth: turn headers, compact rows, Now line, filter chips and folds on both surfaces', async ($, on) => {
+  seed(on, HALL)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    // Tall enough that both turns, opened, fit the Hall's window.
+    const mount = () => $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 80 } }, surface })
+    const press = async (key: string) => {
+      const ui = await mount()
+      await ui.press({ key })
+      await ui.unmount()
+      return mount()
+    }
+    let ui = await mount()
+    // Turn 1 folded (older), turn 2 open (newest), with its counts and running time (61s..66s).
+    expect((await ui.find({ key: 'turn:1' }))?.text).toBe('▸ turn 1 · 1 tool')
+    expect((await ui.find({ key: 'turn:2' }))?.text).toBe('▾ turn 2 · 2 tools · 1 agent')
+    expect(await ui.find({ type: 'Text', text: '00:05' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeUndefined()
+    // Rows: kind glyph, status glyph, the subagent's tool indented under its tier tag, durations.
+    expect(await ui.find({ type: 'Text', text: '  ⚙ ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'careful ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Read · Tasks-ToDo.md' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '…' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '00:02' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '│' })).toBeUndefined()
+    // Filter chips: plain Buttons whose text is the name.
+    expect((await ui.find({ key: 'filter:all' }))?.text).toBe('All')
+    expect((await ui.find({ key: 'filter:tools' }))?.text).toBe('Tools')
+    // Now line: the main loop's running tool, ticking.
+    if (surface === 'terminal') {
+      expect(await ui.find({ type: 'Text', text: /◈ Bash · List files/ })).toBeDefined()
+      expect((await ui.find({ type: 'Text', text: /\d\d:\d\d/, in: 'clock:now' }))?.text).toBe('00:03')
+      await ui.advance(2000)
+      expect((await ui.find({ type: 'Text', text: /\d\d:\d\d/, in: 'clock:now' }))?.text).toBe('00:05')
+    } else {
+      const now = (await ui.findAll({ type: 'Svg' })).at(-1)
+      expect(String(now?.props.alt)).toBe('◈ Bash · List files · 00:03')
+      expect(String(now?.props.source)).toContain('animation-delay:-3s')
+      expect(await ui.find({ type: 'Client' })).toBeUndefined()
+    }
+    await ui.unmount()
+
+    // Main hides the subagent's rows; Agents hides the main tool and the prompt.
+    ui = await press('filter:main')
+    expect(await ui.find({ type: 'Text', text: 'Read · Tasks-ToDo.md' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'Bash · List files' })).toBeDefined()
+    await ui.unmount()
+    ui = await press('filter:agents')
+    expect(await ui.find({ type: 'Text', text: 'Read · Tasks-ToDo.md' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'go on' })).toBeUndefined()
+    expect(await ui.find({ key: 'turn:1' })).toBeUndefined() // turn 1 holds no agent entry
+    await ui.unmount()
+    await (await press('filter:all')).unmount()
+
+    // Opening old turn 1 shows its rows; closing it again hides them.
+    ui = await press('turn:1')
+    expect((await ui.find({ key: 'turn:1' }))?.text).toBe('▾ turn 1 · 1 tool')
+    expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeDefined()
+    await ui.unmount()
+    ui = await press('turn:1')
+    expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('Now line in the pane: running agents by tier, with their clock (phase and idle variants: hall.test.ts)', async ($, on) => {
+  const log = HALL.sessionLog.filter(l => l.id !== 'tu2')
+  seed(on, { ...HALL, sessionLog: log })
+  // 60 columns: the Now line's text gets W less the clock and the Stop slot.
+  let ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60 }, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /◈ 1 agent running · careful/ })).toBeDefined()
+  await ui.unmount()
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(String((await ui.findAll({ type: 'Svg' })).at(-1)?.props.alt)).toBe('◈ 1 agent running · careful · 00:04')
+  await ui.unmount()
 })

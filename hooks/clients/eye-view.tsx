@@ -40,6 +40,10 @@ export const FRAME = 90
 export const RELEASE_MS = 2500
 /** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
 export const MARGIN = 2
+/** Empty rows above and below the frame, so the eye does not sit tight against the reply or what follows. */
+export const PAD_Y = 1
+/** Columns and rows at the frame's edge where no sparkle goes, so a star never touches the region's edge. */
+export const SPARK_INSET: readonly [number, number] = [2, 1]
 const SWEEP_MS = 1500
 /** Lid openness on each frame of a blink. */
 export const BLINK = [0.55, 0.12, 0, 0.3, 0.7]
@@ -244,7 +248,9 @@ const eyeSparkles = (w: number, h: number) => {
     const open = eyeCells(w, h, { ox: 0, oy: 0, open: 1, t: 0 })
     // Dark in the open eye, its neighbours dark too, so a star never sits against the glow.
     const isDark = (x: number, y: number) => (open[y]?.[x]?.[0] ?? BLANK) === BLANK
-    s = scatter(w, h, (x, y) => isDark(x, y) && isDark(x - 1, y) && isDark(x + 1, y))
+    const [ix, iy] = SPARK_INSET
+    const isInside = (x: number, y: number) => x >= ix && x < w - ix && y >= iy && y < h - iy
+    s = scatter(w, h, (x, y) => isInside(x, y) && isDark(x, y) && isDark(x - 1, y) && isDark(x + 1, y))
     sparkCache.set(k, s)
   }
   return s
@@ -344,7 +350,7 @@ export const fit = (columns: number): [number, number] => [columns > 0 ? clamp(c
 /** The pointer at cell (x, y) of the laid-out region, `columns` wide: the frame sits centred in it, so x is moved onto the frame first. */
 export function pointIn(m: EyeState, x: number, y: number, columns: number) {
   const [w, h] = fit(columns)
-  point(m, x - ((columns || w + MARGIN) - w) / 2, y, w, h)
+  point(m, x - ((columns || w + MARGIN) - w) / 2, y - PAD_Y, w, h)
 }
 
 /** Draws the frame again; true when it changed. */
@@ -357,11 +363,15 @@ export function redraw(m: EyeState, columns: number): boolean {
   return true
 }
 
-/** Rows of runs as Text lines, mono, on black; a row that still overruns is cut, never wrapped. */
+/**
+ * Rows of runs as Text lines, mono, on black; a row that still overruns is cut, never wrapped. The rows are centred
+ * in the frame: on desktop a laid-out cell is wider than a mono glyph, so left-aligned rows left all the slack on the
+ * right and the eye sat about 40 px left of the reply's middle.
+ */
 export function draw(elements: ClientSurface['elements'], rows: Seg[][], w: number) {
   const { Box, Text } = elements
   return (
-    <Box flexDirection="column" width={w} overflow="hidden" backgroundColor={bg}>
+    <Box flexDirection="column" alignItems="center" width={w} overflow="hidden" backgroundColor={bg}>
       {rows.map(row => (
         <Text mono wrap="truncate-end">
           {row.map(([s, c]) => (
@@ -395,9 +405,9 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
   m.mode = asMode(props?.mode)
   const [w] = fit(surface.columns)
   const { Box } = surface.elements
-  // The frame centred in its region, the margin split either side.
+  // The frame centred in its region, the margin split either side, PAD_Y empty rows above and below.
   return (
-    <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN}>
+    <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN} paddingY={PAD_Y}>
       {draw(surface.elements, m.rows, w)}
     </Box>
   )

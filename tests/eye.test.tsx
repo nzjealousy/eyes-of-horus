@@ -2,8 +2,8 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, point, pointIn,
-  RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, sparkleLevel, twinkle, W,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, PAD_Y, point,
+  pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SPARK_INSET, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
 import { gold, goldBright, orbCore, text as white } from '../hooks/theme'
@@ -223,6 +223,9 @@ test('sparkles twinkle dim, bright, dim on their own phase, only in the dark aro
         if (ch === [...(bare[y] ?? '')][x]) return
         stars++
         expect(dark[y]?.[x]?.[0]).toBe(BLANK)
+        // Never in the frame's outer ring: the stars keep clear of the region's edges.
+        const [ix, iy] = SPARK_INSET
+        expect(x >= ix && x < W - ix && y >= iy && y < H - iy).toBe(true)
       }),
     )
   }
@@ -292,7 +295,8 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
   expect(eye?.props.props).toEqual({ mode: 'thinking' })
-  expect([eye?.props.width, eye?.props.height]).toEqual([82 + MARGIN, 16])
+  // 16 eye rows plus PAD_Y empty rows above and below.
+  expect([eye?.props.width, eye?.props.height]).toEqual([82 + MARGIN, 16 + 2 * PAD_Y])
   const box = await ui.find({ type: 'Box' })
   expect([box?.props.width, box?.props.flexDirection, box?.props.justifyContent]).toEqual(['100%', 'row', 'center'])
   await ui.pointer({ type: 'move', x: 81, y: 8, in: 'eye' })
@@ -339,11 +343,31 @@ for (const columns of [30, 40, 60, 84]) {
     expect(rows.length).toBe(H)
     for (const r of rows) expect([...r.text].length).toBe(columns - MARGIN)
     const [outer, frameBox] = await ui.findAll({ type: 'Box', in: 'eye' })
-    expect([outer?.props.width, outer?.props.alignItems]).toEqual([columns, 'center'])
-    expect([frameBox?.props.width, frameBox?.props.overflow]).toEqual([columns - MARGIN, 'hidden'])
+    // Still 16 Text rows: the breathing room is the outer Box's padding, not extra rows of the frame.
+    expect([outer?.props.width, outer?.props.alignItems, outer?.props.paddingY]).toEqual([columns, 'center', PAD_Y])
+    // The rows are centred inside the frame too, so glyphs narrower than a laid-out cell (desktop) stay in the middle.
+    expect([frameBox?.props.width, frameBox?.props.overflow, frameBox?.props.alignItems]).toEqual([columns - MARGIN, 'hidden', 'center'])
     await ui.unmount()
   })
 }
+
+test('the frame sits in the middle of its region: equal margins either side, one cell apart at most', () => {
+  for (const columns of [17, 30, 31, 40, 41, 60, 77, 84, 85, 120, 201]) {
+    const [w] = fit(columns)
+    const left = Math.floor((columns - w) / 2)
+    const right = columns - w - left
+    expect(left >= 1 && right >= 1).toBe(true)
+    // Up to the full frame the margin is exactly MARGIN, split evenly; past it, an odd slack leaves one cell over.
+    if (columns <= W + MARGIN) expect([left, right]).toEqual([MARGIN / 2, MARGIN / 2])
+    else expect(right - left <= 1).toBe(true)
+  }
+  // The pointer at the region's middle, below the top padding, is the frame's middle: the gaze stays put.
+  for (const columns of [40, 41, 84, 85]) {
+    const m = init('idle', rnd)
+    pointIn(m, columns / 2 - 0.5, PAD_Y + H / 2 - 0.5, columns)
+    expect(look(m)).toEqual([0, 0])
+  }
+})
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`stale, other plugins' and hidden rows draw nothing of ours (${surface})`, async ($, on) => {

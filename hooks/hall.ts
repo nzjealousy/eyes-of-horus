@@ -66,7 +66,8 @@ export function hallLines(log: readonly HorusLogEntry[], filter: HorusHallFilter
     if (shown.length === 0) continue
     const running = all.some(e => e.status === 'running')
     const end = running ? now : Math.max(...all.map(e => e.endedAt ?? e.at))
-    const open = isTurnOpen(turn, newest, marks)
+    // A running agent's row holds its Stop: its turn stays open (any fold mark waits) until nothing in it runs.
+    const open = all.some(e => e.kind === 'agent' && e.status === 'running') || isTurnOpen(turn, newest, marks)
     const tools = all.filter(e => e.kind === 'tool').length
     const agents = all.filter(e => e.kind === 'agent').length
     out.push({ kind: 'head', turn, open, tools, agents, ms: Math.max(0, end - all[0]!.at), running, entries: all })

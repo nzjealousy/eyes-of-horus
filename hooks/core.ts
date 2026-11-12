@@ -296,6 +296,9 @@ export const registerCore = (on: On) => {
   })
 
   on('tool.call', async ($, e, next) => {
+    // The mod's own calls (a Stop Button's TaskStop, the doctor's probe) are no loop's tools: passed on unlogged.
+    // next.origin is set by the host, so a model's TaskStop (origin engine) is still logged.
+    if (next.origin.plugin === 'eyes-of-horus') return next(e)
     // A subagent's call is logged under its agent but leaves the main loop's phase, inflight and terminalBusy alone.
     const agentId = e.agentId
     const call: HorusInflight = { id: e.tool_use_id, tool: String(e.tool) }
@@ -404,14 +407,15 @@ export const registerCore = (on: On) => {
   })
 
   // `/clear` ends the session (no session.start follows): the log, agents, flow, counters and the pane's marks start
-  // over. startedAt and the context figures stay; the engine measures those again.
+  // over, and the Time tile counts from the clear. The context figures stay; the engine measures those again.
   on('session.end', { reason: 'clear' }, async ($, e, next) => {
     const ended = await next(e)
     await safe(async () => {
       await update($, sessionLog, () => sessionLog.initial)
       await update($, agents, () => agents.initial)
       await update($, progress, () => progress.initial)
-      await update($, usage, u => ({ ...u, tokensTotal: 0, costUsd: 0, agentTimeMs: 0, turns: 0 }))
+      const at = await $.clock.now()
+      await update($, usage, u => ({ ...u, tokensTotal: 0, costUsd: 0, agentTimeMs: 0, turns: 0, startedAt: at }))
       await update($, railOffset, () => railOffset.initial)
       await update($, hallOpen, () => hallOpen.initial)
       await update($, hallFilter, () => hallFilter.initial)

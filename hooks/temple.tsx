@@ -36,7 +36,6 @@ import {
   textWidth,
   tierColorOf,
   tierOf,
-  trunc,
   whoOf,
   xml,
 } from './pane'
@@ -48,6 +47,8 @@ export const TEMPLE_TITLE = 'The Temple'
 export const HALL_LABEL = 'The Hall'
 /** How long a finished agent celebrates in the hall before it stands idle again. */
 export const CELEBRATE_MS = 6000
+/** At this many columns or fewer the overview draws the chambers above the hall while anyone works. */
+export const NARROW_COLS = 40
 export const GONE_TEXT = 'That agent has left the Temple.'
 
 // validate refuses `read` of an atom made in another file (its scan needs the literal ref here), so the
@@ -75,7 +76,7 @@ export type Room = {
 export type Feed = { items: FeedItem[]; older: number }
 
 const accentOf = (tier: string | undefined) => (tier === undefined ? SLAVE_COLOR : tierColorOf(tier))
-const cells = (s: string) => [...s].length
+const cells = (s: string) => [...s].reduce((n, ch) => n + cellWidth(ch), 0)
 
 /**
  * A figure's animation seed from an agent id: stable across redraws (a changing seed restarts the animation) and
@@ -99,7 +100,7 @@ export function wrapLines(s: string, w: number, max: number, width: (t: string) 
   }
   if (i < words.length && lines.length > 0) {
     let last = lines.at(-1)!
-    while (last !== '' && width(last + '…') > w) last = last.slice(0, -1)
+    while (last !== '' && width(last + '…') > w) last = [...last].slice(0, -1).join('') // whole code points
     lines[lines.length - 1] = last.trimEnd() + '…'
   }
   return lines
@@ -349,15 +350,33 @@ export function roomSvg(W: number, room: Room, feed: Feed, scale = CH_SCALE, cor
   return { svg: svgDoc(W, L.H, gridY, CSS + drawn), h: L.H, report: L.report.join(' ') }
 }
 
-// --- terminal: bordered text rooms. shortcut: a cell is taken as one code point wide, as the Gods pane's `trunc`
-// does; a title in wide (CJK) glyphs pushes its row's right border out.
+// --- terminal: bordered text rooms, measured and cut in terminal cells.
+// shortcut: wide ranges and emoji by table, not the full Unicode width data; widen it if a title still shifts a border.
+const WIDE = /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{2fffd}\u{30000}-\u{3fffd}]|\p{Emoji_Presentation}/u
+const ZERO = /[\p{Mn}\p{Me}​-‏︀-️]/u
+/** One code point's terminal cells: East Asian Wide/Fullwidth and emoji 2, combining marks and joiners 0, else 1. */
+export const cellWidth = (ch: string) => (ZERO.test(ch) ? 0 : WIDE.test(ch) ? 2 : 1)
+/** `s` cut to at most `n` cells, '…' (one cell) marking a cut. */
+export const cutCells = (s: string, n: number) => {
+  if (n <= 0) return ''
+  if (cells(s) <= n) return s
+  let out = ''
+  let used = 0
+  for (const ch of s) {
+    const w = cellWidth(ch)
+    if (used + w > n - 1) break
+    out += ch
+    used += w
+  }
+  return out + '…'
+}
 
 /** `tokens` packed into lines no wider than `width` cells, a space between neighbours; a longer token is cut. */
 export function wrapCells<X extends { text: string }>(tokens: readonly X[], width: number): X[][] {
   const lines: X[][] = []
   let used = 0
   for (const t0 of tokens) {
-    const t = cells(t0.text) > width ? { ...t0, text: trunc(t0.text, width) } : t0
+    const t = cells(t0.text) > width ? { ...t0, text: cutCells(t0.text, width) } : t0
     const n = cells(t.text)
     const last = lines.at(-1)
     if (last !== undefined && used + 1 + n <= width) {
@@ -425,6 +444,8 @@ export const registerTemple = (on: On) => {
     const model = templeModel({ agents: list, progress: flow, members, tierOf, now, celebrateMs: CELEBRATE_MS })
     const working = model.chambers.length + model.more
     const counts = `${working} working · ${model.hall.idle.length} idle`
+    // Narrow, the hall alone fills the first screen: working agents come first, the hall below them.
+    const chambersFirst = W <= NARROW_COLS && working > 0
     const rooms: Room[] = model.chambers.map(c => ({ ...c, status: 'running', ms: Math.max(0, now - c.startedAt) }))
     // The focused agent, running or finished; its tier is its savvy-flow task's, else its type's (as templeModel).
     const roomOf = (a: HorusAgent): Room => {
@@ -490,7 +511,7 @@ export const registerTemple = (on: On) => {
             <Text bold color={T.gold}>
               {TEMPLE_TITLE}
             </Text>
-            <Text dimColor>{trunc(` · ${rest}`, Math.max(0, W - cells(TEMPLE_TITLE)))}</Text>
+            <Text dimColor>{cutCells(` · ${rest}`, Math.max(0, W - cells(TEMPLE_TITLE)))}</Text>
           </Text>
         </Box>
       )
@@ -520,12 +541,12 @@ export const registerTemple = (on: On) => {
     )
     const termRoom = (r: Room, feed: Feed) => {
       const edge = accentOf(r.tier)
-      const head = `${r.tier === undefined ? '⚒' : godGlyph(r.tier)} ${trunc(nameOf(r), Math.max(1, W - 8))}`
-      const who = trunc(whoOf(r) + (r.tokens > 0 ? ` · ${fmtTokens(r.tokens)} tok` : ''), Math.max(1, IW - 2 - 8))
+      const head = `${r.tier === undefined ? '⚒' : godGlyph(r.tier)} ${cutCells(nameOf(r), Math.max(1, W - 8))}`
+      const who = cutCells(whoOf(r) + (r.tokens > 0 ? ` · ${fmtTokens(r.tokens)} tok` : ''), Math.max(1, IW - 2 - 8))
       const bw = Math.max(6, Math.min(24, IW - 14))
       const bar = termBar(r, bw)
       const said = r.steps && r.steps.total > 0 ? `${r.steps.done}/${r.steps.total} ${r.steps.note}`.trim() : stateOf(r)
-      const report = wrapLines(reportText(r), IW, REPORT_LINES, cells, trunc)
+      const report = wrapLines(reportText(r), IW, REPORT_LINES, cells, cutCells)
       return (
         <Box key={`room:${r.id}`} flexDirection="column" width={W}>
           <Box flexDirection="row">
@@ -555,7 +576,7 @@ export const registerTemple = (on: On) => {
           {line(`bar:${r.id}`, edge, [
             ['━'.repeat(bar.on), r.status === 'failed' ? T.err : edge],
             ['─'.repeat(bar.off)],
-            [` ${trunc(said, Math.max(0, IW - bw - 1))}`],
+            [` ${cutCells(said, Math.max(0, IW - bw - 1))}`],
           ])}
           {feed.older > 0 ? line(`earlier:${r.id}`, edge, [[`+${feed.older} earlier`]]) : null}
           {feed.items.length === 0
@@ -566,7 +587,7 @@ export const registerTemple = (on: On) => {
                   edge,
                   [
                     [`${GLYPH[it.status]} `, STATUS_COLOR[it.status]],
-                    [trunc(it.label, Math.max(1, IW - 2 - (it.dur ? cells(it.dur) + 1 : 0))), it.running ? T.text : T.dim, it.running],
+                    [cutCells(it.label, Math.max(1, IW - 2 - (it.dur ? cells(it.dur) + 1 : 0))), it.running ? T.text : T.dim, it.running],
                   ],
                   it.dur,
                 ),
@@ -631,24 +652,29 @@ export const registerTemple = (on: On) => {
         const mark = failed === true ? '✗' : failed === false ? '✦' : m.isRunning ? '▸' : '·'
         return { text: `${mark}${m.name}`, color: failed === false ? T.goldBright : m.isRunning ? m.color : T.dim, bold: m.isRunning || failed === false }
       })
+      const hallBox = [
+        <Text key="hall-top" color={T.gold}>{`┌ ${HALL_LABEL} ${'─'.repeat(Math.max(0, W - 4 - cells(HALL_LABEL)))}┐`}</Text>,
+        ...wrapCells(tokens, IW).map((row, i) =>
+          line(
+            `hall:${i}`,
+            T.gold,
+            row.flatMap((t, j): Part[] => [...(j > 0 ? ([[' ']] as Part[]) : []), [t.text, t.color, t.bold]]),
+          ),
+        ),
+        bottom('hall-floor', T.gold),
+      ]
+      const chamberBoxes = [
+        ...rooms.map(r => termRoom(r, agentFeed(log, r.id, 4))),
+        model.more > 0 ? (
+          <Text key="more" dimColor>
+            +{model.more} more working
+          </Text>
+        ) : null,
+      ]
       return (
         <Box flexDirection="column" width={W}>
           {header(counts)}
-          <Text key="hall-top" color={T.gold}>{`┌ ${HALL_LABEL} ${'─'.repeat(Math.max(0, W - 4 - cells(HALL_LABEL)))}┐`}</Text>
-          {wrapCells(tokens, IW).map((row, i) =>
-            line(
-              `hall:${i}`,
-              T.gold,
-              row.flatMap((t, j): Part[] => [...(j > 0 ? ([[' ']] as Part[]) : []), [t.text, t.color, t.bold]]),
-            ),
-          )}
-          {bottom('hall-floor', T.gold)}
-          {rooms.map(r => termRoom(r, agentFeed(log, r.id, 4)))}
-          {model.more > 0 ? (
-            <Text key="more" dimColor>
-              +{model.more} more working
-            </Text>
-          ) : null}
+          {chambersFirst ? [...chamberBoxes, ...hallBox] : [...hallBox, ...chamberBoxes]}
         </Box>
       )
     }
@@ -669,8 +695,12 @@ export const registerTemple = (on: On) => {
       })),
       ...model.hall.idle.map(m => ({ key: m.key, name: m.name, color: m.color, state: 'idle' as const, seed: members.indexOf(m) + 1 })),
     ]
-    const hall = hallSvg(SW, hallCells, y)
-    at(hall.h)
+    // Each drawing takes its grid offset as it is built, so the nodes are built in the order they are drawn.
+    const hallNode = () => {
+      const hall = hallSvg(SW, hallCells, y)
+      at(hall.h)
+      return <Svg key="hall" source={hall.svg} alt={hallAlt} width={SW} height={hall.h} />
+    }
     const hallAlt = `${HALL_LABEL}: ${hallCells.map(c => `${c.name} ${c.state === 'idle' ? 'idle' : c.state === 'done' ? 'celebrating' : 'failed'}`).join(', ') || 'empty'}`
     const CW = Math.min(SW, CH_MAX_W)
     const chamberNode = (r: Room) => {
@@ -696,13 +726,16 @@ export const registerTemple = (on: On) => {
       )
     }
     const label = (key: string, s: string) => <Svg key={key} source={rowSvg(SW, s, at(ROW_H))} alt={s} width={SW} height={ROW_H} />
+    const chamberNodes = () => [
+      rooms.length > 0 ? label('h-chambers', `Chambers · ${working}`) : null,
+      ...rooms.map(chamberNode),
+      model.more > 0 ? label('more', `+${model.more} more working`) : null,
+    ]
+    const body = chambersFirst ? [...chamberNodes(), hallNode()] : [hallNode(), ...chamberNodes()]
     return (
       <Box flexDirection="column" width={W}>
         {head}
-        <Svg key="hall" source={hall.svg} alt={hallAlt} width={SW} height={hall.h} />
-        {rooms.length > 0 ? label('h-chambers', `Chambers · ${working}`) : null}
-        {rooms.map(chamberNode)}
-        {model.more > 0 ? label('more', `+${model.more} more working`) : null}
+        {body}
       </Box>
     )
   })

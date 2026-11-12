@@ -239,7 +239,7 @@ test('/clear resets the log, agents, flow, counters and the pane marks; other se
   await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
   const s = peek()
   expect([s.sessionLog, s.agents, s.progress]).toEqual([[], [], null])
-  expect(s.usage).toEqual({ contextPct: 25, contextUsed: 50000, contextMax: 200000, tokensTotal: 0, costUsd: 0, agentTimeMs: 0, turns: 0, startedAt: 0 })
+  expect(s.usage).toEqual({ contextPct: 25, contextUsed: 50000, contextMax: 200000, tokensTotal: 0, costUsd: 0, agentTimeMs: 0, turns: 0, startedAt: 1000 })
   for (const [k, v] of [['railOffset', 0], ['hallFilter', 'all'], ['chamber', ''], ['armedStop', '']] as const) expect(written[k]).toBe(v)
   expect(written.hallOpen).toEqual([])
 })
@@ -302,6 +302,14 @@ test('only savvy-flow agents get the terse prompt prefix', async ($, on) => {
   expect(spawnedPrompts.at(-1)).toBe('review it')
   await spawn('savvy-fable')
   expect(spawnedPrompts.at(-1)).toBe(CAVEMAN + 'review it')
+})
+
+test("a model's own TaskStop is logged as a main-loop tool (only the mod's own calls are skipped: pane.test)", async ($, on) => {
+  const { inTool, peek } = engine(on)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await callTool($, { tool: 'TaskStop', task_id: 'a1' })
+  expect(inTool.at(-1)?.phase).toBe('tool')
+  expect(peek().sessionLog.at(-1)).toMatchObject({ kind: 'tool', label: 'TaskStop', status: 'done' })
 })
 
 test('a failing state write does not stop the tool call', async ($, on) => {

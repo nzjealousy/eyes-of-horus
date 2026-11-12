@@ -721,6 +721,34 @@ test('Stop on running agent rows only: two presses call TaskStop with its id, to
   }
 })
 
+// Pins the outcome only: the kit already keeps the plugin's own tool.call hook out of its own press's call, so core's
+// origin guard (for an engine that does run it) is not what this exercises.
+test("the Stop Button's own TaskStop call is not logged and leaves the phase alone, its answer still coming back", async ($, on) => {
+  seed(on, { ...HALL, turnId: 't9' })
+  const calls: string[] = []
+  const written: string[] = []
+  const toasts: string[] = []
+  on('state.set', (_, e, next) => {
+    written.push(e.key)
+    return next(e)
+  })
+  on('tool.call', (_, e) => {
+    calls.push(String(e.tool))
+    return { result: { message: 'Successfully stopped task: a1', task_id: 'a1', task_type: 'local_agent' } }
+  })
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  const ui = await $.ui.mount({ ...PANE, props: TALL, surface: 'terminal' })
+  await ui.press({ key: 'stop:agent:a1' })
+  await ui.press({ key: 'stop:agent:a1' })
+  await ui.unmount()
+  expect(calls).toEqual(['TaskStop'])
+  expect(toasts).toEqual(['The Field of Reeds (Aaru): Successfully stopped task: a1'])
+  for (const k of ['sessionLog', 'phase', 'phaseSince', 'inflight', 'terminalBusy']) expect(written).not.toContain(k)
+})
+
 test('an agent row and its tools in the Hall of Truth open that agent in the Temple, as ↗ does; other rows stay plain', async ($, on) => {
   seed(on, {
     agents: [A('a1', 'Worker', 'running')],

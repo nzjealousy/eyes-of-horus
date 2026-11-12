@@ -267,9 +267,10 @@ const SLAVE_HEAD: Part = ['bd', 4, [
   '.........SSSS',
 ]]
 const TOOLS: Record<string, Part> = {
+  // Bronze head (as the work pose's): obsidian vanished on the dark panel.
   hammer: ['pr', 10, [
-    '...................KKK',
-    '...................KKK',
+    '...................DDD',
+    '...................DDD',
     ...Array<string>(8).fill('....................F'),
   ]],
   scroll: ['pr', 15, ['...................fff', '...................fFf', '...................fff', '...................fFf', '...................fff']],

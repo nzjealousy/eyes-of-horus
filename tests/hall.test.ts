@@ -42,6 +42,8 @@ const LOG: HorusLogEntry[] = [
   E('s2', 2, 'tool', 13_000, { status: 'running', agentId: 'a1' }),
   E('t2', 2, 'tool', 14_000, { status: 'done', endedAt: 17_000 }),
 ]
+// LOG with everything that runs ended.
+const ENDED = LOG.map(e => (e.status === 'running' ? { ...e, status: 'done' as const, endedAt: 18_000 } : e))
 const show = (lines: HallLine[]) => lines.map(l => (l.kind === 'head' ? `${l.open ? 'v' : '>'}${l.turn}` : `${l.sub ? '  ' : ''}${l.entry.id}`))
 
 test('grouping: a header per turn, newest open and older folded by default, rows in log order', async () => {
@@ -69,12 +71,23 @@ test('folding: marks n >= 0 open turn n, n < 0 close turn -n-1; a toggle flips w
   expect(marks).toEqual([1])
   marks = toggleTurn(marks, 2, 2)
   expect(marks).toEqual([1, -3])
-  expect(show(hallLines(LOG, 'all', marks, 20_000))).toEqual(['v1', 'p1', 't1', 'r1', '>2'])
+  // (LOG's turn 2 runs an agent, which holds it open: see the next test; here everything in it has ended.)
+  expect(show(hallLines(ENDED, 'all', marks, 20_000))).toEqual(['v1', 'p1', 't1', 'r1', '>2'])
   // A closed turn stays closed when a newer turn arrives, and an opened one stays open.
   expect([isTurnOpen(2, 3, marks), isTurnOpen(1, 3, marks)]).toEqual([false, true])
   // Toggling again replaces the mark rather than stacking it.
   expect(toggleTurn(toggleTurn(marks, 1, 2), 1, 2)).toEqual([-3, 1])
   expect(toggleTurn(Array.from({ length: 100 }, (_, i) => i + 10), 1, 2).length).toBe(100) // capped
+})
+
+test('a folded turn with a running agent stays open (its Stop reachable), and folds again once the agent ends', async () => {
+  const closed = toggleTurn([], 2, 2) // the newest turn folded: [-3]
+  expect(show(hallLines(LOG, 'all', closed, 20_000))).toEqual(['>1', 'v2', 'p2', 'agent:a1', '  s1', '  s2', 't2'])
+  // The mark is kept: the agent ends and the turn folds.
+  expect(show(hallLines(ENDED, 'all', closed, 20_000))).toEqual(['>1', '>2'])
+  // A running tool alone does not hold a folded turn open.
+  const toolOnly = LOG.filter(e => e.kind !== 'agent')
+  expect(show(hallLines(toolOnly, 'all', closed, 20_000))).toEqual(['>1', '>2'])
 })
 
 test('filters: Main without agentId, Agents with agentId or kind agent, Tools every tool; empty turns drop', async () => {

@@ -6,6 +6,9 @@ import { BAR_H, OPEN_W, svgWidth, textWidth } from '../hooks/pane'
 import type { Feed, Room } from '../hooks/temple'
 import {
   CELEBRATE_MS,
+  cellWidth,
+  cutCells,
+  NARROW_COLS,
   CH_MAX_W,
   CH_SCALE,
   FEED_ROW,
@@ -276,14 +279,15 @@ test('one working agent: its chamber shows who, bar, clock, tokens and its last 
     const ui = await $.ui.mount({ ...TEMPLE, surface })
     if (surface === 'desktop') {
       const a = await alts(ui)
+      // 40 columns is narrow: the chamber comes above the hall.
       expect(a.map(x => x[0])).toEqual([
         'The Temple: 1 working · 14 idle',
-        expect.stringMatching(/^The Hall: Ra idle, Anubis idle, Thoth idle/),
         'Chambers · 1',
         'Build the Temple: Horus · careful, working, 01:05; doing PowerShell · Run the tests',
+        expect.stringMatching(/^The Hall: Ra idle, Anubis idle, Thoth idle/),
       ])
-      expect(a[1]![0]).not.toContain('Horus')
-      const room = a[3]![1]
+      expect(a[3]![0]).not.toContain('Horus')
+      const room = a[2]![1]
       for (const s of ['eoh-wk-horus', 'Horus · careful', '5k tokens', 'Tasks 2/4', '50%', 'animation-delay:-65s', 'PowerShell · Run the tests', 'Read · hall.ts']) expect(room).toContain(s)
       // The last five of its own six actions; another agent's and the main loop's are not its.
       expect(room).not.toContain('Read · pane.tsx')
@@ -330,6 +334,59 @@ test('two agents of one type get a chamber each, newest first; more than eight w
   }
 })
 
+const cellsOf = (s: string) => [...s].reduce((n, ch) => n + cellWidth(ch), 0)
+
+test('terminal cells: wide (CJK) and emoji glyphs take two, combining marks none; cuts and wraps count cells', async () => {
+  expect(['a', '·', '⚒', '✦', '✗', '▸', '━', '𓅃', '中', 'カ', '한', 'Ａ', '🚀', '😀', '́', '‍', '️'].map(cellWidth)).toEqual([
+    1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 0, 0, 0,
+  ])
+  expect(cutCells('神殿を建てる', 5)).toBe('神殿…')
+  expect(cutCells('神殿を建てる', 6)).toBe('神殿…') // a wide glyph never straddles the cut
+  expect(cutCells('a🚀b', 4)).toBe('a🚀b')
+  expect(cutCells('a🚀bc', 4)).toBe('a🚀…')
+  expect(cutCells('abc', 0)).toBe('')
+  const tokens = ['·神殿', '·🚀rocket', '·Ra', '·建てる建てる建てる建てる'].map(text => ({ text }))
+  for (let width = 8; width <= 40; width++)
+    for (const l of wrapCells(tokens, width)) fits(l.reduce((n, t) => n + cellsOf(t.text), 0) + l.length - 1, width)
+})
+
+test('a CJK and emoji chamber title and feed keep every terminal room row exactly the pane width', async ($, on) => {
+  seed(on, {
+    agents: [A('a1', 'savvy-flow:savvy-careful', { title: '神殿を建てる 🚀 and then a much longer tail of words' })],
+    sessionLog: [TOOL('t1', 'a1', 'Read · 中文のファイル名がとても長い場合.md 🚀🚀🚀🚀'), TOOL('t2', 'a1', 'Edit · ok')],
+  })
+  for (const columns of [30, 40, 60]) {
+    const ui = await $.ui.mount({ ...TEMPLE, props: { ...TEMPLE.props, bodyColumns: columns }, surface: 'terminal' })
+    const head = (await ui.find({ key: 'chamber:a1' }))?.text ?? ''
+    expect(head.startsWith('𓅃 神殿を建てる 🚀')).toBe(true)
+    const border = (await ui.find({ type: 'Text', text: /^ ─*┐$/ }))?.text ?? ''
+    expect(cellsOf('┌ ') + cellsOf(head) + cellsOf(border)).toBe(columns)
+    for (const key of ['bar:a1', 'feed:a1:0', 'feed:a1:1', 'hall:0']) expect(cellsOf((await ui.find({ key }))?.text ?? '')).toBe(columns)
+    await ui.unmount()
+  }
+})
+
+test(`at ${NARROW_COLS} columns or fewer the chambers come above the hall while anyone works; wider, or idle, the hall leads`, async ($, on) => {
+  seed(on, WORK)
+  for (const surface of SURFACES)
+    for (const [columns, chambersFirst] of [[NARROW_COLS, true], [30, true], [NARROW_COLS + 1, false], [80, false]] as const) {
+      const ui = await $.ui.mount({ ...TEMPLE, props: { ...TEMPLE.props, bodyColumns: columns }, surface })
+      if (surface === 'desktop') {
+        const a = (await alts(ui)).map(x => x[0])
+        const hall = a.findIndex(s => s.startsWith('The Hall: '))
+        const room = a.findIndex(s => s.startsWith('Build the Temple: '))
+        expect([hall > 0, room > 0, room < hall]).toEqual([true, true, chambersFirst])
+        expect(a.indexOf('Chambers · 1')).toBe(room - 1)
+      } else {
+        const keys = await uniqueKeys(ui)
+        const hall = keys.indexOf('hall:0')
+        const room = keys.indexOf('room:a1')
+        expect([hall > 0, room > 0, room < hall]).toEqual([true, true, chambersFirst])
+      }
+      await ui.unmount()
+    }
+})
+
 test('more than eight working: eight chambers, the rest counted', async ($, on) => {
   seed(on, { agents: Array.from({ length: 11 }, (_, i) => A(`g${i}`, 'general-purpose', { startedAt: i })) })
   for (const surface of SURFACES) {
@@ -339,7 +396,9 @@ test('more than eight working: eight chambers, the rest counted', async ($, on) 
       const a = (await alts(ui)).map(x => x[0])
       expect(a[0]).toBe('The Temple: 11 working · 14 idle')
       expect(a).toContain('Chambers · 11')
-      expect(a.at(-1)).toBe('+3 more working')
+      // 40 columns is narrow: the hall comes last, right under the count.
+      expect(a.at(-2)).toBe('+3 more working')
+      expect(a.at(-1)).toMatch(/^The Hall: /)
     } else expect(await ui.find({ type: 'Text', text: '+3 more working' })).toBeDefined()
     await uniqueKeys(ui)
     await ui.unmount()

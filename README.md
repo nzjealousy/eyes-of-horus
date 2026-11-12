@@ -5,6 +5,7 @@ A Claude Code mod that restyles the desktop app and the terminal in gold and obs
 - **Eye and orb:** an ASCII Eye of Horus sits centred under the latest reply. It looks around, follows the pointer while it is over the eye, and blinks. With voice-over on, an orb with subtitles reads replies aloud.
 - **Dashboard above the prompt:** ponytail level buttons, a context bar, cost, token, agent-time and turn counts, the savvy-flow progress bar, and a heartbeat trace that speeds up while Claude works.
 - **Gods pane:** a card for each savvy-flow agent, drawn as an Egyptian god by tier (Ra, Anubis, Horus, Thoth, Bastet), plus a foldable timeline of the session.
+- **The Temple:** a second pane, opened with `/temple` or the ↗ on a Gods card. Idle gods and workers stand together in a columned hall, and an agent that just finished celebrates there for a few seconds. Each working agent gets its own chamber: its animated figure, progress bar, running clock, token count and the last few things it did. The ↗ on a chamber (or on a Gods card) fills the pane with that one agent and its longer action list, with Back, Transcript (the full conversation) and a two-click Stop.
 - **Hall of Truth:** the session log in the Gods pane, grouped by turn. A Now line says what runs at the moment, filter chips show All, Main, Agents or Tools, and each turn header carries a small bar of its tools, agents and reply over time. A Stop turn button on the Now line and a Stop button on each running agent's row each need two clicks: the first turns the button into Sure?, the second stops it, and the button resets after 3 seconds.
 
 ## Install
@@ -26,6 +27,7 @@ In the desktop app, where `/plugin` does not run: click + next to the prompt box
 ## Commands
 
 - `/voiceover [on|off|test]` turns voice-over on or off, or speaks one test line.
+- `/temple` opens the Temple pane.
 - `/horus-eye` reports what the eye is doing and the last drawing fault, if any.
 
 ## What it changes

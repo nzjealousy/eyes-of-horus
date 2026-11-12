@@ -244,13 +244,20 @@ const SEEDED = {
   usage: { contextPct: 41.6, contextUsed: 0, contextMax: 0, tokensTotal: 12_400, costUsd: 0.42, agentTimeMs: 125_000, turns: 3 },
 }
 
-test('the pane draws cards and the rail, and a press opens the agent, on every surface', async ($, on) => {
+test('the pane draws cards and the rail, and a press opens the agent in the Temple, on every surface', async ($, on) => {
   seed(on, SEEDED)
-  const viewed: unknown[] = []
+  // ↗ now focuses the agent's chamber and opens the Temple pane (the transcript view moved to the Temple's own
+  // Transcript Button: temple.test.tsx); an open that is not placed is toasted.
+  const opened: string[] = []
+  const focused: unknown[] = []
   const toasts: string[] = []
-  on('ui.view', (_, e) => {
-    viewed.push(e)
-    return { value: { deny: 'no row' } }
+  on('ui.open', (_, e) => {
+    opened.push(`${e.id}:${e.title}`)
+    return { value: { isPlaced: false, reason: 'no-surface' } }
+  })
+  on('state.set', (_, e, next) => {
+    if (e.key === 'chamber') focused.push(e.value)
+    return next(e)
   })
   on('ui.toast', (_, e) => {
     toasts.push(e.text)
@@ -285,8 +292,9 @@ test('the pane draws cards and the rail, and a press opens the agent, on every s
     await ui.press({ key: 'agent:a1' })
     await ui.unmount()
   }
-  expect(viewed).toEqual([{ agentId: 'a1' }, { agentId: 'a1' }])
-  expect(toasts.length).toBe(2)
+  expect(opened).toEqual(['horus-temple:The Temple', 'horus-temple:The Temple'])
+  expect(focused).toEqual(['a1', 'a1'])
+  expect(toasts).toEqual(['The Temple is not shown (no-surface)', 'The Temple is not shown (no-surface)'])
 })
 
 test('desktop: header tiles, grid, one Svg per card, groups and a planned card; terminal: god glyphs', async ($, on) => {

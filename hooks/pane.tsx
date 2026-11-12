@@ -5,21 +5,9 @@ import type { HorusAgent, HorusLogKind, HorusProgress, HorusTaskStatus, HorusUsa
 import { fmtElapsed } from './clients/agent-clock'
 import * as core from './core'
 import { GOD_H, GOD_TIERS, GOD_W, godGlyph, godName, godSvg, slaveKey } from './gods'
-import {
-  barRuns,
-  barSegments,
-  disarmStop,
-  FILTER_LABEL,
-  HALL_FILTERS,
-  hallLines,
-  headLabel,
-  newestTurn,
-  nowLine,
-  pressStop,
-  STOP_ARM_MS,
-  toggleTurn,
-} from './hall'
+import { barRuns, barSegments, FILTER_LABEL, HALL_FILTERS, hallLines, headLabel, newestTurn, nowLine, toggleTurn } from './hall'
 import type { BarSeg, HallHead, HallRow } from './hall'
+import { stopControls } from './stop'
 import * as T from './theme'
 
 const PANE = 'horus'
@@ -40,6 +28,7 @@ const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const,
 const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, core.hallOpen.initial, { shape: core.hallOpen.shape! })
 const turnId = atom({ plugin: 'eyes-of-horus', key: 'turnId' } as const, core.turnId.initial)
 const armedStop = atom({ plugin: 'eyes-of-horus', key: 'armedStop' } as const, core.armedStop.initial)
+const chamber = atom({ plugin: 'eyes-of-horus', key: 'chamber' } as const, core.chamber.initial)
 
 export const PANE_TITLE = 'The Field of Reeds (Aaru)'
 export const GODS_LABEL = 'Gods'
@@ -129,8 +118,8 @@ export const groupCards = (cards: readonly Card[]) => ({
   planned: cards.filter(c => c.agentId === undefined),
 })
 
-const GLYPH: Record<HorusTaskStatus, string> = { running: '●', done: '✓', failed: '✗', pending: '○' }
-const STATUS_COLOR: Record<HorusTaskStatus, string> = { running: T.aqua, done: T.ok, failed: T.err, pending: T.dim }
+export const GLYPH: Record<HorusTaskStatus, string> = { running: '●', done: '✓', failed: '✗', pending: '○' }
+export const STATUS_COLOR: Record<HorusTaskStatus, string> = { running: T.aqua, done: T.ok, failed: T.err, pending: T.dim }
 const KIND: Record<HorusLogKind, [string, string]> = {
   prompt: ['❯', T.gold],
   tool: ['⚙', T.aqua],
@@ -189,7 +178,7 @@ export const OPEN_W = 40 // top-right corner of a card kept clear for the ↗ Bu
 export const TOGGLE_W = 96 // top-right corner of the header kept clear for the Collapse/Expand Button
 const SEP = 6 // gap between the god/tier and the model/effort parts of the second line
 
-const xml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
+export const xml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
 // Advance of UI text in em: each class takes the widest of its glyphs in Segoe UI (regular or semibold, measured),
 // plus 6% for other UI fonts and hinting, so a fitted string never reaches the next slot.
 const em = (ch: string) => {
@@ -225,13 +214,13 @@ const dots = (W: number, H: number, gridY: number) =>
   `<defs><pattern id="d" y="${-(gridY % GRID_STEP)}" width="${GRID_STEP}" height="${GRID_STEP}" patternUnits="userSpaceOnUse">` +
   `<circle cx="${GRID_STEP / 2}" cy="${GRID_STEP / 2}" r="1" fill="${T.goldDim}" opacity="0.4"/></pattern></defs>` +
   `<rect width="${W}" height="${H}" fill="url(#d)"/>`
-const svgDoc = (W: number, H: number, gridY: number, body: string) =>
+export const svgDoc = (W: number, H: number, gridY: number, body: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${CSS}${dots(W, H, gridY)}${body}</svg>`
-const text = (x: number, y: number, size: number, body: string, attrs = '') =>
+export const text = (x: number, y: number, size: number, body: string, attrs = '') =>
   `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}"${attrs}>${body}</text>`
-const r1 = (n: number) => Math.round(n * 10) / 10
+export const r1 = (n: number) => Math.round(n * 10) / 10
 
-const statusMark = (x: number, y: number, status: HorusTaskStatus) => {
+export const statusMark = (x: number, y: number, status: HorusTaskStatus) => {
   if (status === 'running') return `<circle class="live" cx="${x}" cy="${y}" r="3.5" fill="${T.aqua}"/>`
   if (status === 'done')
     return `<path d="M${x - 5} ${y}l3.5 3.5 6.5-7" fill="none" stroke="${T.ok}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`
@@ -248,7 +237,7 @@ export const barFill = (c: Pick<Card, 'status' | 'steps'>): number | undefined =
   return c.status === 'running' ? undefined : 0
 }
 export const BAR_H = 14
-const pixelBar = (x: number, y: number, w: number, c: Card, color: string) => {
+export const pixelBar = (x: number, y: number, w: number, c: Pick<Card, 'status' | 'steps'>, color: string) => {
   const fill = barFill(c)
   const ink = c.status === 'failed' ? T.err : color
   const box = `x="${x}" y="${y}" width="${r1(w)}" height="${BAR_H}" rx="4"`
@@ -289,7 +278,7 @@ const pixelBar = (x: number, y: number, w: number, c: Card, color: string) => {
 }
 
 /** What a card says for its time: a refused run (failed under a second) or one with no start reads '—'. */
-export const elapsedLabel = (c: Card) => (c.ms === undefined || (c.status === 'failed' && c.ms < 1000) ? '—' : fmtElapsed(c.ms))
+export const elapsedLabel = (c: Pick<Card, 'status' | 'ms'>) => (c.ms === undefined || (c.status === 'failed' && c.ms < 1000) ? '—' : fmtElapsed(c.ms))
 
 // A running clock ticks inside its Svg (a Client cannot draw into one): each figure is a column of digits stepped by
 // a CSS animation whose negative delay is the elapsed time, and each of fmtElapsed's two formats (mm:ss, h:mm:ss)
@@ -307,7 +296,7 @@ const clockGroups = (s: number): { from: number; to: number; cells: ClockCell[] 
 /** The elapsed time `ms` right-aligned at `xr`, ticking while `running`: its markup and the widest it gets (`w`). */
 export const clockSvg = (xr: number, y: number, size: number, c: Pick<Card, 'status' | 'ms'>, color: string = T.aqua) => {
   if (c.status !== 'running' || c.ms === undefined) {
-    const label = elapsedLabel(c as Card)
+    const label = elapsedLabel(c)
     return { svg: text(xr, y, size, xml(label), ' class="s" text-anchor="end" font-variant-numeric="tabular-nums"'), w: textWidth(label, size) }
   }
   const s = c.ms / 1000
@@ -340,18 +329,18 @@ export const clockSvg = (xr: number, y: number, size: number, c: Pick<Card, 'sta
   return { svg: `${css}${clip}<g class="clk" clip-path="url(#ck)" fill="${color}" ${attrs}>${groups.join('')}</g>`, w }
 }
 
-const tierColorOf = (tier: string | undefined) => (tier !== undefined && Object.hasOwn(T.tierColor, tier) && T.tierColor[tier]) || T.dim
+export const tierColorOf = (tier: string | undefined) => (tier !== undefined && Object.hasOwn(T.tierColor, tier) && T.tierColor[tier]) || T.dim
 /** Slaves share one accent: linen gold, so their bars read apart from the gods' tier colours. */
 export const SLAVE_COLOR = '#c9b27c'
 const accentOf = (c: Card) => (c.tier === undefined ? SLAVE_COLOR : tierColorOf(c.tier))
 /** `savvy-flow:savvy-careful` -> `savvy-careful`, `general-purpose` stays. */
 export const shortType = (type: string) => type.split(':').pop() ?? type
-const whoOf = (c: Card) => (c.tier === undefined ? `Slave · ${shortType(c.type)}` : `${godName(c.tier)} · ${c.tier}`)
+export const whoOf = (c: Pick<Card, 'tier' | 'type'>) => (c.tier === undefined ? `Slave · ${shortType(c.type)}` : `${godName(c.tier)} · ${c.tier}`)
 const spriteOf = (c: Card) => (c.tier === undefined ? slaveKey(c.type) : c.tier)
 
 export const CARD_H = 78
 const BAR_Y = 45
-const PCT_W = 36 // room right of the bar for its percentage
+export const PCT_W = 36 // room right of the bar for its percentage
 
 /** Where each part of a card goes at width W: every text is cut to its own slot, none reaching the next one. */
 export const cardLayout = (W: number, c: Card) => {
@@ -531,13 +520,13 @@ export function rosterSvg(W: number, members: readonly Member[], gridY = 0, smal
 // from the newest) and the pane's own window stays put, so the Gods above it never move. Where it starts is kept from
 // the last draw. shortcut: module state, reset by a hot reload until the next draw; a desktop row is taken as ~20 px
 // tall (the Gods' Svgs are counted in it, and the desktop Now line is drawn exactly one such row tall).
-const DESKTOP_ROW_PX = 20
+export const DESKTOP_ROW_PX = 20
 const hall = { top: 0, entries: 1, total: 0 }
 /** Display lines the Hall shows in `rows` rows: one row each (headers and entries alike). */
 export const railEntries = (rows: number) => Math.max(1, Math.floor(rows))
 
 /** The desktop Gods' drawing width for `cols` body columns. */
-const svgWidth = (cols: number) => Math.max(240, Math.min(900, cols * 8 - 8))
+export const svgWidth = (cols: number) => Math.max(240, Math.min(900, cols * 8 - 8))
 /** Terminal columns and desktop pixels kept free at the Now line's right end for its "Stop turn" Button. */
 export const STOP_COLS = 11
 export const STOP_PX = 88
@@ -553,10 +542,6 @@ export const stripSvg = (segs: readonly BarSeg[]) =>
   `<rect y="4.5" width="${STRIP_PX}" height="1" fill="${T.dim}" opacity="0.5"/>` +
   segs.map(s => `<rect${s.running ? ' class="live"' : ''} x="${s.x}" y="1" width="${s.w}" height="8" rx="1.5" fill="${s.color}"/>`).join('') +
   '</svg>'
-// The disarm timer of the armed Stop Button; a press cancels it, so only the newest arming disarms.
-// shortcut: module state, lost on a hot reload (which cancels the timer too); the atom is the truth either way.
-let disarmTimer: ReturnType<EngineInterface['clock']['after']> | undefined
-type StopResult = { deny?: string; isError?: true; text?: string; result?: { message?: string } }
 /** The desktop Now line: its text, then its clock (ticking from `ms` when given), clear of the Stop corner. */
 export const nowSvg = (W: number, label: string, ms?: number) => {
   const H = DESKTOP_ROW_PX
@@ -640,9 +625,14 @@ export const registerPane = (on: On) => {
     const summary = summaryLine(cards, use)
     const fold = (k: 'session' | 'agents') => update($, paneCollapsed, p => ({ ...p, [k]: !p[k] }))
 
+    // ↗ focuses the agent's chamber and opens the Temple (temple.tsx draws it; its Transcript Button opens the
+    // engine's transcript view). The press is the person's own, so the pane is placed at any width.
     const open = (agentId: string) => async () => {
-      const r = await $.ui.view({ agentId })
-      if (r.deny !== undefined) $.ui.toast(`${PANE_TITLE}: cannot open that agent (${r.deny})`)
+      await update($, chamber, () => agentId)
+      const r = await $.ui
+        .open({ id: 'horus-temple', title: 'The Temple' })
+        .catch((err: unknown) => ({ isPlaced: false as const, reason: err instanceof Error ? err.message : String(err) }))
+      if (!r.isPlaced) $.ui.toast(`The Temple is not shown (${r.reason})`)
     }
     const agentsToggle = (
       <Button key="agents-toggle" plain dimColor onPress={() => fold('agents')}>
@@ -839,40 +829,10 @@ export const registerPane = (on: On) => {
       const tier = type === undefined ? undefined : tierOf(type)
       return tier === undefined ? SLAVE_COLOR : tierColorOf(tier)
     }
-    // Two-step Stop Buttons: a first press arms the Button's key (it reads Sure?), a second within STOP_ARM_MS runs
-    // `run`; a press on another Stop arms that one instead.
-    const stopButton = (key: string, label: string, run: () => Promise<unknown>) => (
-      <Button
-        key={`stop:${key}`}
-        plain
-        onPress={async () => {
-          let fire = false
-          await update($, armedStop, a => {
-            const r = pressStop(a, key)
-            fire = r.fire
-            return r.armed
-          })
-          disarmTimer?.cancel()
-          disarmTimer = fire ? undefined : $.clock.after(STOP_ARM_MS, () => void update($, armedStop, a => disarmStop(a, key)))
-          if (fire) await run()
-        }}
-      >
-        <Text color={T.err} bold={armed === key}>
-          {armed === key ? 'Sure?' : label}
-        </Text>
-      </Button>
-    )
+    // Two-step Stop Buttons (stop.tsx): a first press arms the Button (it reads Sure?), a second runs the stop.
+    const { stopButton, stopAgent } = stopControls($, ui, armed, PANE_TITLE)
     // Rejects when `tid` is no longer the running turn's (it ended between the draw and the press).
     const stopTurn = () => $.turn.abort({ turnId: tid }).catch(() => $.ui.toast(`${PANE_TITLE}: that turn is no longer running`))
-    // An agent stops through the TaskStop tool, as the model would stop it. The typed tool-call union is too deep for
-    // tsc (TS2589), so the input is cast; the loader wants the call spelled $.tool.call(...) at its site.
-    const stopAgent = (agentId: string) => async () => {
-      const r = await ($.tool.call({ tool: 'TaskStop', task_id: agentId } as never) as Promise<unknown> as Promise<StopResult>).catch(
-        (err: unknown): StopResult => ({ deny: err instanceof Error ? err.message : String(err) }),
-      )
-      const why = r.deny ?? (r.isError ? (r.text ?? 'error') : undefined)
-      $.ui.toast(why === undefined ? `${PANE_TITLE}: ${r.result?.message ?? 'agent stopped'}` : `${PANE_TITLE}: cannot stop that agent (${trunc(why, 120)})`)
-    }
     const canStopTurn = ph !== 'idle' && tid !== ''
 
     const nowInfo = nowLine(log, ph, phSince, tagOf)

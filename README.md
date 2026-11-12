@@ -27,6 +27,12 @@ In the desktop app, where `/plugin` does not run: click + next to the prompt box
 - `/voiceover [on|off|test]` turns voice-over on or off, or speaks one test line.
 - `/horus-eye` reports what the eye is doing and the last drawing fault, if any.
 
+## What it changes
+
+- Every savvy-flow agent (`savvy-*`) gets a short "terse answers" line prepended to its prompt. Other agents' prompts are left alone.
+- The session log shows tool names and descriptions only for shell tools, with control characters and credentials (`token=`, `Bearer ...`, `user:pass@`) masked.
+- The mod only reads the ponytail flag file in your Claude config folder; it makes no network calls and runs no shell commands.
+
 ## Limits
 
 - The desktop sidebar can only be tinted, and the prompt box itself cannot be replaced.

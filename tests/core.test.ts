@@ -3,6 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import {
   CAVEMAN,
+  mergeProgress,
   agents,
   phase,
   ponytail,
@@ -16,7 +17,7 @@ import {
 
 // Nothing sits beneath the plugin: these hooks stand for the engine. A test's own hook may not read `$.state`,
 // so the state is read off the writes passing down to the kit; `inTool` records it as each tool ran.
-function engine(on: On, flag: string | null = 'lite\n') {
+function engine(on: On, flag: string | null = 'lite\n', failKey?: string) {
   const written: Record<string, unknown> = {}
   const val = <T>(a: Atom<T>): T => (a.ref.key in written ? written[a.ref.key] : a.initial) as T
   const peek = () => ({
@@ -32,6 +33,7 @@ function engine(on: On, flag: string | null = 'lite\n') {
   })
   const inTool: ReturnType<typeof peek>[] = []
   on('state.set', (_, e, next) => {
+    if (e.key === failKey) throw new Error('boom')
     const v = e.value as unknown
     // A key declared Shaped<T> is stored as { shape, value }.
     written[e.key] = typeof v === 'object' && v !== null && 'shape' in v && 'value' in v ? v.value : v
@@ -204,6 +206,63 @@ test('savvy-progress calls are captured, merged and joined with agents', async (
   p = peek().progress
   expect(p?.tasks).toEqual([])
   expect(p?.done).toBe(0)
+})
+
+test('hostile savvy-progress input is clamped', () => {
+  const p = mergeProgress(null, {
+    title: 'T\u001b]52;c;x\u0007' + 'x'.repeat(500),
+    total: 1e9,
+    done: -5,
+    phase: 'p'.repeat(100),
+    tasks: [
+      ...Array.from({ length: 80 }, () => ({ title: 'a', tier: 'constructor' })),
+      { title: 'b', tier: 'heavy' },
+    ],
+  })
+  expect(p.total).toBe(200)
+  expect(p.done).toBe(0)
+  expect(p.title.length).toBe(200)
+  expect(p.title).not.toMatch(/[\u0000-\u001f]/)
+  expect(p.phase.length).toBe(40)
+  expect(p.tasks.length).toBe(50)
+  expect(p.tasks[0]?.tier).toBe('medium') // an unknown tier (even `constructor`) falls back
+  expect(mergeProgress(null, { total: Infinity }).total).toBe(0)
+  expect(mergeProgress(null, { total: '9' }).total).toBe(0)
+})
+
+test('log labels lose control characters and credentials; shells log their description only', async ($, on) => {
+  const { peek } = engine(on)
+  await $.turn.start({ text: 'use \u001b[31mred\u001b[0m token=abc123 now', turnId: 't1' })
+  await callTool($, { tool: 'Bash', command: 'curl -H "Authorization: Bearer sk-secret" https://x.dev' })
+  await callTool($, { tool: 'Bash', command: 'ls', description: 'List files' })
+  await callTool($, { tool: 'WebFetch', url: 'https://user:pw@host.dev/a' })
+  const log = peek().sessionLog.map(l => `${l.kind}:${l.label}`)
+  expect(log).toEqual(['prompt:use  [31mred [0m token=*** now', 'tool:Bash', 'tool:Bash · List files', 'tool:WebFetch · https://***@host.dev/a'])
+})
+
+test('only savvy-flow agents get the terse prompt prefix', async ($, on) => {
+  engine(on)
+  const spawn = (subagentType: string) =>
+    $.agent.spawn({
+      tool_use_id: 'tu',
+      prompt: 'review it',
+      description: 'Review',
+      subagentType,
+      provider: { plugin: 'engine', tier: 'core' },
+      parentModel: 'm',
+      background: true,
+      fork: false,
+    })
+  await spawn('general-purpose')
+  expect(spawnedPrompts.at(-1)).toBe('review it')
+  await spawn('savvy-fable')
+  expect(spawnedPrompts.at(-1)).toBe(CAVEMAN + 'review it')
+})
+
+test('a failing state write does not stop the tool call', async ($, on) => {
+  const { inTool } = engine(on, 'lite\n', 'inflight')
+  await callTool($, { tool: 'Read', file_path: 'a.ts' })
+  expect(inTool.length).toBe(1) // the tool ran
 })
 
 test('sessionLog keeps the newest 200 entries', { timeoutMs: 60000 }, async ($, on) => {

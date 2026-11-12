@@ -50,12 +50,14 @@ export const tierOf = (type: string): string | undefined => {
 
 // What each savvy-flow tier runs on (its agent definitions), for the `tier · model · effort` line.
 const TIER_MODEL: Record<string, string> = {
-  fable: 'Opus · max',
+  fable: 'Fable · high',
   heavy: 'Opus · xhigh',
   careful: 'Opus · high',
   medium: 'Opus · medium',
   light: 'Opus · low',
 }
+
+const modelOf = (tier: string) => (Object.hasOwn(TIER_MODEL, tier) ? TIER_MODEL[tier] : '')
 
 export const fmtTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${Math.round(n)}`)
 export const fmtCost = (usd: number) => `≈$${usd < 10 ? usd.toFixed(2) : usd.toFixed(1)}`
@@ -165,7 +167,7 @@ export const OPEN_W = 40 // top-right corner of a card kept clear for the ↗ Bu
 export const TOGGLE_W = 96 // top-right corner of the header kept clear for the Collapse/Expand Button
 const SEP = 6 // gap between the god/tier and the model/effort parts of the second line
 
-const xml = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c)
+const xml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
 // Advance of UI text in em: each class takes the widest of its glyphs in Segoe UI (regular or semibold, measured),
 // plus 6% for other UI fonts and hinting, so a fitted string never reaches the next slot.
 const em = (ch: string) => {
@@ -316,7 +318,7 @@ export const clockSvg = (xr: number, y: number, size: number, c: Pick<Card, 'sta
   return { svg: `${css}${clip}<g class="clk" clip-path="url(#ck)" fill="${color}" ${attrs}>${groups.join('')}</g>`, w }
 }
 
-const tierColorOf = (tier: string | undefined) => (tier !== undefined && T.tierColor[tier]) || T.dim
+const tierColorOf = (tier: string | undefined) => (tier !== undefined && Object.hasOwn(T.tierColor, tier) && T.tierColor[tier]) || T.dim
 /** Slaves share one accent: linen gold, so their bars read apart from the gods' tier colours. */
 export const SLAVE_COLOR = '#c9b27c'
 const accentOf = (c: Card) => (c.tier === undefined ? SLAVE_COLOR : tierColorOf(c.tier))
@@ -338,7 +340,7 @@ export const cardLayout = (W: number, c: Card) => {
   const titleR = clockR - clock.w - 8
   const lineW = right - X0
   const who = fitText(whoOf(c), 11, lineW * 0.6)
-  const meta = [c.tier === undefined ? '' : TIER_MODEL[c.tier], c.status === 'failed' ? 'failed' : ''].filter(Boolean).join(' · ')
+  const meta = [c.tier === undefined ? '' : modelOf(c.tier), c.status === 'failed' ? 'failed' : ''].filter(Boolean).join(' · ')
   // ctx and cost per agent are not in state; tokens are, once the agent finishes a turn.
   const stats = c.tokens ? `${fmtTokens(c.tokens)} tokens` : ''
   const statsW = textWidth(stats, 11)
@@ -384,7 +386,7 @@ export const agentSvg = (W: number, c: Card, gridY = 0) => {
 export const plannedLayout = (W: number, c: Card) => {
   const lineW = W - 10 - X0
   const who = fitText(whoOf(c), 11, lineW * 0.6)
-  const meta = [c.tier === undefined ? '' : TIER_MODEL[c.tier], 'planned'].filter(Boolean).join(' · ')
+  const meta = [c.tier === undefined ? '' : modelOf(c.tier), 'planned'].filter(Boolean).join(' · ')
   return { lineW, title: fitText(c.title, 13, W - 26 - X0), who, meta: fitText(meta, 11, lineW - textWidth(who, 11) - SEP) }
 }
 export const plannedSvg = (W: number, c: Card, gridY = 0) => {

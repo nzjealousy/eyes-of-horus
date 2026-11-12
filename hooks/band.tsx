@@ -15,8 +15,6 @@ const usage = atom({ plugin: 'eyes-of-horus', key: 'usage' } as const, core.usag
 const voice = atom({ plugin: 'eyes-of-horus', key: 'voice' } as const, core.voice.initial, { shape: core.voice.shape! })
 
 const LEVELS: readonly HorusPonytailLevel[] = ['off', 'lite', 'full', 'ultra']
-// Letters, not digits: a bare digit in an empty composer can press a band Button.
-const HOTKEY: Record<HorusPonytailLevel, string> = { off: 'o', lite: 'l', full: 'f', ultra: 'u' }
 const FADE_MS = 10_000
 // About 8 CSS px per reported column on the desktop (as savvy-progress measures it).
 const PX = 8
@@ -91,7 +89,7 @@ export function ctxCells(pct: number, width: number): [string, string] {
 type Seg = { tier: string; status: HorusTaskStatus }
 const segments = (p: HorusProgress): Seg[] =>
   p.tasks.length > 0 ? p.tasks : Array.from({ length: p.total }, (_, i) => ({ tier: '', status: i < p.done ? 'done' : 'pending' }))
-const segColor = (s: Seg) => (s.status === 'failed' ? err : (tierColor[s.tier] ?? dim))
+const segColor = (s: Seg) => (s.status === 'failed' ? err : (Object.hasOwn(tierColor, s.tier) ? tierColor[s.tier] : dim))
 
 // Terminal: one cell-run per task in `width` cells, a one-cell gap between runs when there is room.
 // Done and failed are solid, running is solid but dim, pending is the light track.
@@ -212,7 +210,7 @@ export const registerBand = (on: On) => {
       row1 = (
         <Box flexDirection="row" alignItems="center" gap={1} width={width}>
           {LEVELS.map(l => (
-            <Button key={`ph:level:${l}`} plain hotkey={HOTKEY[l]} onPress={() => setLevel($, l)}>
+            <Button key={`ph:level:${l}`} plain onPress={() => setLevel($, l)}>
               {l === level ? (
                 <Text backgroundColor={gold} color={bg} bold>
                   {` ${l} `}

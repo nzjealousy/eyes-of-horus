@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, SessionContextUsage, SessionCost } from 'claude-code'
 
+import { GOD_TIERS } from './gods'
 import type {
   HorusAgent,
   HorusInflight,
@@ -57,29 +58,48 @@ const BLANK: HorusProgress = { title: '', total: 0, done: 0, phase: '', finished
 
 type $ = EngineInterface
 
-const firstLine = (s: string, max = 80) => (s.trim().split('\n')[0] ?? '').slice(0, max)
+// Terminal control characters (ESC, OSC, CSI, newlines) are blanked: labels are model- and tool-written text drawn raw.
+const clean = (s: string) => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+// Credentials a label could carry (a Bearer header, token=..., user:pass@host) are masked before it is shown or kept.
+const redact = (s: string) =>
+  s
+    .replace(/(bearer\s+|(?:token|key|secret|password|passwd|auth)[=:]\s*)\S+/gi, '$1***')
+    .replace(/\/\/[^\s/:@]+:[^\s/@]+@/g, '//***@')
+const firstLine = (s: string, max = 80) => redact(clean(s.trim().split('\n')[0] ?? '')).slice(0, max)
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
-const num = (v: unknown) => (typeof v === 'number' ? v : undefined)
+// Model-written text kept as a short, control-free label.
+const label = (v: unknown, max = 200) => {
+  const s = str(v)
+  return s === undefined ? undefined : clean(s).slice(0, max)
+}
+// A count from model-written input: a whole number in 0..max, else absent.
+const count = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(0, Math.trunc(v))) : undefined)
+const MAX_TASKS = 50
+const isSavvy = (type: string) => /(?:^|:)savvy-[a-z]+$/.test(type)
 
 // A savvy-progress call's input (model-written, unvalidated) merged over what stands; fields left out keep their value.
 export function mergeProgress(prev: HorusProgress | null, input: Readonly<Record<string, unknown>>): HorusProgress {
-  const title = str(input.title)
+  const title = label(input.title)
   const base = prev && (title === undefined || title === prev.title) ? prev : BLANK
   const tasks = Array.isArray(input.tasks)
     ? input.tasks
         .filter((t): t is Record<string, unknown> => typeof t === 'object' && t !== null && typeof t.title === 'string')
-        .map(t => ({
-          title: t.title as string,
-          tier: str(t.tier) ?? 'medium',
-          after: Array.isArray(t.after) ? t.after.filter((n): n is number => typeof n === 'number') : [],
-          status: 'pending' as const,
-        }))
+        .slice(0, MAX_TASKS)
+        .map(t => {
+          const tier = str(t.tier)
+          return {
+            title: label(t.title) as string,
+            tier: (GOD_TIERS as readonly string[]).includes(tier ?? '') ? (tier as string) : 'medium',
+            after: Array.isArray(t.after) ? t.after.filter((n): n is number => typeof n === 'number').slice(0, MAX_TASKS) : [],
+            status: 'pending' as const,
+          }
+        })
     : base.tasks
   return {
     title: title ?? base.title,
-    total: num(input.total) ?? base.total,
-    done: num(input.done) ?? base.done,
-    phase: str(input.phase) ?? base.phase,
+    total: count(input.total, MAX_TASKS * 4) ?? base.total,
+    done: count(input.done, MAX_TASKS * 4) ?? base.done,
+    phase: label(input.phase, 40) ?? base.phase,
     finished: typeof input.finished === 'boolean' ? input.finished : base.finished,
     tasks,
   }
@@ -90,6 +110,8 @@ export const withStatus = (p: HorusProgress, list: readonly HorusAgent[]): Horus
   ...p,
   tasks: p.tasks.map(t => ({ ...t, status: list.findLast(a => a.title === t.title)?.status ?? 'pending' })),
 })
+
+const safe = (f: () => Promise<unknown>) => f().then(() => undefined, () => undefined)
 
 async function log($: $, kind: HorusLogKind, label: string, agentId?: string) {
   const at = await $.clock.now()
@@ -120,7 +142,9 @@ async function saveAgents($: $, change: (list: HorusAgent[]) => HorusAgent[]) {
 }
 
 // Adds an agent, or marks a known one running again (a resumed agent or a woken teammate).
-async function addAgent($: $, id: string, type: string, title: string) {
+async function addAgent($: $, id: string, rawType: string, rawTitle: string) {
+  const type = label(rawType) ?? ''
+  const title = label(rawTitle) ?? ''
   const at = await $.clock.now()
   let isNew = false
   await saveAgents($, list => {
@@ -160,7 +184,9 @@ async function refreshPonytail($: $) {
 }
 
 function toolLabel(tool: string, args: Readonly<Record<string, unknown>>) {
-  const detail = ['description', 'command', 'file_path', 'pattern', 'url', 'query'].map(k => str(args[k])).find(Boolean)
+  // A shell command can carry secrets: shells show their description only.
+  const keys = SHELLS.includes(tool) ? ['description'] : ['description', 'command', 'file_path', 'pattern', 'url', 'query']
+  const detail = keys.map(k => str(args[k])).find(Boolean)
   return detail ? `${tool} · ${firstLine(detail, 60)}` : tool
 }
 
@@ -196,20 +222,25 @@ export const registerCore = (on: On) => {
   on('tool.call', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
     const call: HorusInflight = { id: e.tool_use_id, tool: String(e.tool) }
-    await track($, list => [...list, call])
-    // An Agent call is logged as the agent itself, at agent.spawn.
-    if (call.tool !== 'Agent') await log($, 'tool', toolLabel(call.tool, e as unknown as Record<string, unknown>))
+    // Bookkeeping must never stop the user's tool: a failure here is dropped and the tool still runs.
+    await safe(async () => {
+      await track($, list => [...list, call])
+      // An Agent call is logged as the agent itself, at agent.spawn.
+      if (call.tool !== 'Agent') await log($, 'tool', toolLabel(call.tool, e as unknown as Record<string, unknown>))
+    })
     try {
       return await next(e)
     } finally {
-      await track($, list => list.filter(c => c.id !== call.id))
+      await safe(() => track($, list => list.filter(c => c.id !== call.id)))
     }
   })
 
   on('agent.spawn', async ($, e, next) => {
-    const prompt = e.prompt.startsWith(CAVEMAN) ? e.prompt : CAVEMAN + e.prompt
+    // Only savvy-flow workers get the terse prefix; other plugins' agents (reviewers, general-purpose) keep their prompt.
+    const prompt = !isSavvy(String(e.subagentType)) || e.prompt.startsWith(CAVEMAN) ? e.prompt : CAVEMAN + e.prompt
     const spawned = await next({ ...e, prompt })
-    if (spawned.agentId !== undefined) await addAgent($, spawned.agentId, e.subagentType, e.description)
+    const id = spawned.agentId
+    if (id !== undefined) await safe(() => addAgent($, id, e.subagentType, e.description))
     return spawned
   })
 
@@ -226,7 +257,7 @@ export const registerCore = (on: On) => {
           list.map(a => {
             if (a.id !== agentId) return a
             const prev = a.steps ?? { done: 0, total: 0, note: '' }
-            return { ...a, steps: { done: num(input.done) ?? prev.done, total: num(input.total) ?? prev.total, note: str(input.note) ?? prev.note } }
+            return { ...a, steps: { done: count(input.done, 1000) ?? prev.done, total: count(input.total, 1000) ?? prev.total, note: label(input.note) ?? prev.note } }
           }),
         )
       }

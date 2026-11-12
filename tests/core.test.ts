@@ -65,7 +65,7 @@ function engine(on: On, flag: string | null = 'lite\n', failKey?: string) {
     spawnedPrompts.push(e.prompt)
     return { model: 'm', agentId: 'a1' }
   })
-  return { clock, inTool, peek }
+  return { clock, inTool, peek, written }
 }
 
 // The typed tool-call union is too deep for tsc (TS2589); the call itself is plain.
@@ -213,6 +213,35 @@ test('savvy-progress calls are captured, merged and joined with agents', async (
   p = peek().progress
   expect(p?.tasks).toEqual([])
   expect(p?.done).toBe(0)
+})
+
+test('a flow is stamped when it turns finished, keeps that stamp, and loses it when reopened', () => {
+  const run = mergeProgress(null, { title: 'F', total: 1 }, 10)
+  expect(run.finishedAt).toBeUndefined()
+  const fin = mergeProgress(run, { done: 1, finished: true }, 20)
+  expect(fin.finishedAt).toBe(20)
+  expect(mergeProgress(fin, { phase: 'x' }, 30).finishedAt).toBe(20)
+  expect(mergeProgress(fin, { finished: false }, 40).finishedAt).toBeUndefined()
+  // A new flow finished at once takes its own stamp, not the old flow's.
+  expect(mergeProgress(fin, { title: 'G', finished: true }, 50).finishedAt).toBe(50)
+})
+
+test('/clear resets the log, agents, flow, counters and the pane marks; other session ends keep them', async ($, on) => {
+  const { peek, written } = engine(on)
+  on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.session.append(progressCall({ title: 'F', total: 1 }))
+  await $.turn.complete({ answer: 'ok', durationMs: 9, isAborted: false, turnId: 't1', reason: 'answer', usage: USAGE })
+  await $.session.end({ reason: 'resume', sessionId: 's0', resume: { id: 's0' } })
+  expect(peek().sessionLog.length).toBe(2)
+
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  const s = peek()
+  expect([s.sessionLog, s.agents, s.progress]).toEqual([[], [], null])
+  expect(s.usage).toEqual({ contextPct: 25, contextUsed: 50000, contextMax: 200000, tokensTotal: 0, costUsd: 0, agentTimeMs: 0, turns: 0, startedAt: 0 })
+  for (const [k, v] of [['railOffset', 0], ['hallFilter', 'all'], ['chamber', ''], ['armedStop', '']] as const) expect(written[k]).toBe(v)
+  expect(written.hallOpen).toEqual([])
 })
 
 test('hostile savvy-progress input is clamped', () => {

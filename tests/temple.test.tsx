@@ -197,7 +197,7 @@ const SURFACES = ['terminal', 'desktop'] as const
 // the plugin writes it (`raw`, which a test may also set); any other key is the kit's own store. Returns the clock
 // and the chamber's writes too.
 function seed(on: On, values: Record<string, unknown>) {
-  const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-1', sessionLog: 'log-2', usage: 'usage-1' }
+  const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-2', sessionLog: 'log-2', usage: 'usage-1' }
   const raw: Record<string, unknown> = { ...values }
   const focus: unknown[] = []
   let version = 1

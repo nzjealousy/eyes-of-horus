@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, point,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, point, pointIn,
   RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
@@ -159,6 +159,20 @@ test('the gaze takes nine targets, follows the pointer and lets go 2.5 s after t
   expect(look(m)).toEqual([1, 0])
   m.t = m.pointerUntil
   expect(look(m)).toEqual([0, 0])
+})
+
+test('the pointer gaze is read against the centred frame, not its wider region', () => {
+  // A 200-column region holds an 82-column frame 59 columns in: region column 60 is the frame's left edge.
+  const m = init('idle', rnd)
+  pointIn(m, 60, 8, 200)
+  expect(look(m)).toEqual([-1, 0])
+  pointIn(m, 100, 8, 200) // the frame's middle
+  expect(look(m)).toEqual([0, 0])
+  pointIn(m, 140, 8, 200)
+  expect(look(m)).toEqual([1, 0])
+  // Before the first layout (0 columns) the region is the frame plus MARGIN.
+  pointIn(m, 1, 8, 0)
+  expect(look(m)).toEqual([-1, 0])
 })
 
 test('thinking sweeps the gaze across the top; the tool eye scans left and right', () => {

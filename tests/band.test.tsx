@@ -1,7 +1,7 @@
-import type { On } from 'claude-code'
+import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { budget, compactNumber, ctxCells, ctxColor, ctxSvg, dashboardVisible, duration, progressRuns, progressSvg } from '../hooks/band'
+import { budget, compactNumber, ctxCells, ctxColor, ctxSvg, dashboardVisible, duration, progressRuns, progressSvg, progressView } from '../hooks/band'
 import { aqua, err, gold, goldBright, panelHi, purple, purpleDim } from '../hooks/theme'
 import type { HorusProgress } from '../types'
 
@@ -184,6 +184,21 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.unmount()
   })
 }
+
+test('the done line runs 10 s from the stored finishedAt, so a reload (fresh module) keeps or skips it alike', () => {
+  // Only the fade-out redraw is asked of the engine here.
+  const timers: number[] = []
+  const $ = { clock: { after: (ms: number) => timers.push(ms) }, ui: { invalidate: () => {} } } as unknown as EngineInterface
+  expect(progressView($, flow(), 100_000)).toBe('active')
+  const fin = flow({ finished: true, finishedAt: 96_000 })
+  expect(progressView($, fin, 100_000)).toBe('done')
+  expect(progressView($, fin, 106_001)).toBe('none')
+  // Finished long before this render (as after a reload past the window): collapsed straight away.
+  expect(progressView($, flow({ finished: true, finishedAt: 1 }), 100_000)).toBe('none')
+  // One redraw at the window's end, not one per render.
+  expect(progressView($, fin, 101_000)).toBe('done')
+  expect(timers).toEqual([6000])
+})
 
 test('a refused level switch shows a toast', async ($, on) => {
   const { toasts } = engine(on, true)

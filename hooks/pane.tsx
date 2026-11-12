@@ -462,15 +462,18 @@ export const headerSvg = (W: number, title: string, use: HorusUsage, now: number
   )
 }
 
-/** A one-line label row of the section ("Running · 2", "No agents yet."); `isTitle` draws it as a gold section name. */
-export const rowSvg = (W: number, label: string, gridY = 0, isTitle = false) =>
+/**
+ * A one-line label row of the section ("Running · 2", "No agents yet."); `isTitle` draws it as a gold section name.
+ * `clear` px at the right are kept free for a Button laid over the row (a group's Collapse/Expand).
+ */
+export const rowSvg = (W: number, label: string, gridY = 0, isTitle = false, clear = 0) =>
   svgDoc(
     W,
     ROW_H,
     gridY,
     isTitle
-      ? text(0, 17, 14, xml(fitText(label, 14, W)), ` fill="${T.gold}" font-weight="600"`)
-      : text(0, 16, 12, xml(fitText(label, 12, W)), ' class="s"'),
+      ? text(0, 17, 14, xml(fitText(label, 14, W - clear)), ` fill="${T.gold}" font-weight="600"`)
+      : text(0, 16, 12, xml(fitText(label, 12, W - clear)), ' class="s"'),
   )
 
 // --- the roster: every god tier and every known worker type, waiting (breathing) or running (walking).
@@ -623,7 +626,13 @@ export const registerPane = (on: On) => {
     const slaveCards = cards.filter(c => c.tier === undefined)
     const { gods, slaves } = roster(list)
     const summary = summaryLine(cards, use)
-    const fold = (k: 'session' | 'agents') => update($, paneCollapsed, p => ({ ...p, [k]: !p[k] }))
+    const fold = (k: 'session' | 'agents' | 'running' | 'finished') => update($, paneCollapsed, p => ({ ...p, [k]: !p[k] }))
+    // A folded group keeps its head and count and hides its cards.
+    const groupToggle = (k: 'running' | 'finished', text: string) => (
+      <Button key={`${k}-toggle`} plain dimColor onPress={() => fold(k)}>
+        {text}
+      </Button>
+    )
 
     // ↗ focuses the agent's chamber and opens the Temple (temple.tsx draws it; its Transcript Button opens the
     // engine's transcript view). The press is the person's own, so the pane is placed at any width.
@@ -692,14 +701,27 @@ export const registerPane = (on: On) => {
       const planned = (c: Card) => (
         <Svg key={`plan:${c.key}`} source={plannedSvg(SW, c, at(PLAN_H))} alt={`${c.title}: ${whoOf(c)}, planned`} width={SW} height={PLAN_H} />
       )
+      // A group head with its Collapse/Expand Button over the corner the row keeps clear (as the header's).
+      const groupHead = (key: string, k: 'running' | 'finished', s: string) => (
+        <Box key={key} flexDirection="column" alignSelf="flex-start">
+          <Svg source={rowSvg(SW, s, at(ROW_H), false, TOGGLE_W)} alt={s} width={SW} height={ROW_H} />
+          <Box position="absolute" top={0} right={0}>
+            {groupToggle(k, folded[k] ? 'Expand' : 'Collapse')}
+          </Box>
+        </Box>
+      )
       const g = groupCards(godCards)
       const s = groupCards(slaveCards)
       const body = folded.agents
         ? [strip('roster-all', [...gods, ...slaves], true)]
         : [
             strip('roster-gods', gods),
-            ...(g.running.length > 0 ? [head('h-run', `Running · ${g.running.length}`), ...g.running.map(card)] : []),
-            ...(g.finished.length > 0 ? [head('h-done', `Finished · ${g.finished.length}`), ...g.finished.map(card)] : []),
+            ...(g.running.length > 0
+              ? [groupHead('h-run', 'running', `Running · ${g.running.length}`), ...(folded.running ? [] : g.running.map(card))]
+              : []),
+            ...(g.finished.length > 0
+              ? [groupHead('h-done', 'finished', `Finished · ${g.finished.length}`), ...(folded.finished ? [] : g.finished.map(card))]
+              : []),
             ...(g.planned.length > 0 ? [head('h-plan', `Planned · ${g.planned.length}`), ...g.planned.map(planned)] : []),
             head('h-slaves', SLAVES_LABEL, true),
             strip('roster-slaves', slaves),
@@ -766,6 +788,18 @@ export const registerPane = (on: On) => {
           </Text>
         </Box>
       )
+      // The terminal list has no group rows: one row of the two group toggles, and a folded group's cards drop out.
+      const tg = groupCards(godCards)
+      const isShown = (c: Card) =>
+        c.agentId === undefined || !(c.status === 'running' ? folded.running : folded.finished)
+      const groupRow =
+        tg.running.length + tg.finished.length > 0 ? (
+          <Box key="agents-groups" flexDirection="row" width={W}>
+            {groupToggle('running', `${folded.running ? '▸' : '▾'} Running · ${tg.running.length}`)}
+            <Text> </Text>
+            {groupToggle('finished', `${folded.finished ? '▸' : '▾'} Finished · ${tg.finished.length}`)}
+          </Box>
+        ) : null
       const rows = [
         <Box key="agents-head" flexDirection="row" width={W}>
           <Box flexGrow={1}>
@@ -787,7 +821,8 @@ export const registerPane = (on: On) => {
           ? [names([...gods, ...slaves], 'roster-all')]
           : [
               names(gods, 'roster-gods'),
-              ...godCards.map(terminalCard),
+              ...(groupRow ? [groupRow] : []),
+              ...godCards.filter(isShown).map(terminalCard),
               <Text key="h-slaves" bold color={T.gold}>
                 {SLAVES_LABEL}
               </Text>,

@@ -31,6 +31,8 @@ export type HorusProgress = {
   phase: string
   finished: boolean
   tasks: HorusTask[]
+  /** When `finished` last became true (`$.clock.now()`); absent while not finished. */
+  finishedAt?: number
 }
 
 export type HorusPonytailLevel = 'off' | 'lite' | 'full' | 'ultra'
@@ -92,15 +94,13 @@ declare module 'claude-code' {
       progress: Shaped<HorusProgress | null>
       ponytail: Shaped<HorusPonytail>
       usage: Shaped<HorusUsage>
-      /** Written by the band (T3) only. */
-      terminalMode: boolean
       terminalBusy: boolean
       /** Written by the eye/orb (T2) only. */
       voice: Shaped<HorusVoice>
       sessionLog: Shaped<HorusLogEntry[]>
       inflight: Shaped<HorusInflight[]>
-      /** Written by the pane only: which of its sections are folded. */
-      paneCollapsed: Shaped<{ session: boolean; agents: boolean }>
+      /** Written by the pane only: which of its sections (and the Gods' Running and Finished groups) are folded. */
+      paneCollapsed: Shaped<{ session: boolean; agents: boolean; running: boolean; finished: boolean }>
       /** Written by the pane only: Hall of Truth entries scrolled back from the newest (0 = follow). */
       railOffset: number
       /** Written by the pane only: the Hall of Truth's filter chip. */

@@ -136,23 +136,20 @@ export function progressSvg(p: HorusProgress, w: number, h = 10): string {
 
 const clip = (s: string, max: number) => (s.length > max ? s.slice(0, Math.max(1, max - 1)) + '…' : s)
 
-// shortcut: when the flow finished is kept in this module (core stores no finishedAt), so a hot reload in the 10 s
-// window restarts it; ask core for progress.finishedAt if that matters.
-let finish: { title: string; at: number } | null = null
+// The finishedAt whose fade-out redraw is scheduled, so each render in the window does not add another timer.
+let fading = -1
 
-function progressView($: EngineInterface, p: HorusProgress | null, now: number, idleSince: number | null): ProgressView {
+// A finished flow shows its "done" line for FADE_MS from core's finishedAt (kept in state, so a reload keeps it).
+export function progressView($: EngineInterface, p: HorusProgress | null, now: number): ProgressView {
   if (p === null || (p.total === 0 && p.tasks.length === 0 && p.title === '')) return 'none'
-  if (!p.finished) {
-    finish = null
-    return 'active'
+  if (!p.finished) return 'active'
+  const left = FADE_MS - (now - (p.finishedAt ?? 0))
+  if (left <= 0) return 'none'
+  if (fading !== p.finishedAt) {
+    fading = p.finishedAt ?? 0
+    $.clock.after(left, () => $.ui.invalidate('ui.render'))
   }
-  if (finish === null || finish.title !== p.title) {
-    // A flow that finished before this module saw it (idle for longer than the fade) stays collapsed.
-    const old = idleSince !== null && now - idleSince > FADE_MS
-    finish = { title: p.title, at: old ? 0 : now }
-    if (!old) $.clock.after(FADE_MS, () => $.ui.invalidate('ui.render'))
-  }
-  return now - finish.at < FADE_MS ? 'done' : 'none'
+  return 'done'
 }
 
 async function setLevel($: EngineInterface, level: HorusPonytailLevel) {
@@ -191,7 +188,7 @@ export const registerBand = (on: On) => {
     const now = await $.clock.now()
     const cols = e.props.bodyColumns
     const dash = dashboardVisible(busy)
-    const view = progressView($, p, now, ph === 'idle' && tl > 0 ? tl : null)
+    const view = progressView($, p, now)
     const fit = budget(e.props.maxRows, dash, view)
 
     const ui = $.ui.resolve(e)

@@ -341,6 +341,12 @@ const asMode = (v: unknown): EyeMode => (v === 'thinking' || v === 'tool' ? v : 
  */
 export const fit = (columns: number): [number, number] => [columns > 0 ? clamp(columns - MARGIN, 1, W) : W, H]
 
+/** The pointer at cell (x, y) of the laid-out region, `columns` wide: the frame sits centred in it, so x is moved onto the frame first. */
+export function pointIn(m: EyeState, x: number, y: number, columns: number) {
+  const [w, h] = fit(columns)
+  point(m, x - ((columns || w + MARGIN) - w) / 2, y, w, h)
+}
+
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number): boolean {
   const next = frame(m, ...fit(columns))
@@ -379,7 +385,7 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
     })
     surface.onPointer(ev => {
       if (ev.type !== 'move' && ev.type !== 'enter' && ev.type !== 'down') return
-      point(s, ev.x, ev.y, ...fit(surface.columns))
+      pointIn(s, ev.x, ev.y, surface.columns)
       surface.setState(s)
     })
     redraw(s, surface.columns)

@@ -19,10 +19,10 @@ export const phaseSince = atom({ plugin: 'eyes-of-horus', key: 'phaseSince' } as
 export const turnSeq = atom({ plugin: 'eyes-of-horus', key: 'turnSeq' } as const, 0)
 export const turnId = atom({ plugin: 'eyes-of-horus', key: 'turnId' } as const, '')
 export const tail = atom({ plugin: 'eyes-of-horus', key: 'tail' } as const, 0)
-export const terminalMode = atom({ plugin: 'eyes-of-horus', key: 'terminalMode' } as const, false)
 export const terminalBusy = atom({ plugin: 'eyes-of-horus', key: 'terminalBusy' } as const, false)
 export const agents = atom({ plugin: 'eyes-of-horus', key: 'agents' } as const, [], { shape: 'agents-1' })
-export const progress = atom({ plugin: 'eyes-of-horus', key: 'progress' } as const, null, { shape: 'progress-1' })
+// progress-2: gained finishedAt; progress-1 values read as absent.
+export const progress = atom({ plugin: 'eyes-of-horus', key: 'progress' } as const, null, { shape: 'progress-2' })
 export const ponytail = atom({ plugin: 'eyes-of-horus', key: 'ponytail' } as const, { level: 'off' }, { shape: 'ponytail-1' })
 export const usage = atom(
   { plugin: 'eyes-of-horus', key: 'usage' } as const,
@@ -39,8 +39,9 @@ export const sessionLog = atom({ plugin: 'eyes-of-horus', key: 'sessionLog' } as
 const inflight = atom({ plugin: 'eyes-of-horus', key: 'inflight' } as const, [], { shape: 'inflight-1' })
 export const paneCollapsed = atom(
   { plugin: 'eyes-of-horus', key: 'paneCollapsed' } as const,
-  { session: false, agents: false },
-  { shape: 'pane-collapsed-1' },
+  { session: false, agents: false, running: false, finished: false },
+  // pane-collapsed-2: gained running and finished (the Gods groups); pane-collapsed-1 values read as absent.
+  { shape: 'pane-collapsed-2' },
 )
 
 /** Hall of Truth entries scrolled back from the newest; 0 follows the newest. Written by the pane. */
@@ -88,7 +89,8 @@ const MAX_TASKS = 50
 const isSavvy = (type: string) => /(?:^|:)savvy-[a-z]+$/.test(type)
 
 // A savvy-progress call's input (model-written, unvalidated) merged over what stands; fields left out keep their value.
-export function mergeProgress(prev: HorusProgress | null, input: Readonly<Record<string, unknown>>): HorusProgress {
+// `now` stamps finishedAt when the flow turns finished; a flow already finished keeps its stamp.
+export function mergeProgress(prev: HorusProgress | null, input: Readonly<Record<string, unknown>>, now = 0): HorusProgress {
   const title = label(input.title)
   const base = prev && (title === undefined || title === prev.title) ? prev : BLANK
   const tasks = Array.isArray(input.tasks)
@@ -105,13 +107,15 @@ export function mergeProgress(prev: HorusProgress | null, input: Readonly<Record
           }
         })
     : base.tasks
+  const finished = typeof input.finished === 'boolean' ? input.finished : base.finished
   return {
     title: title ?? base.title,
     total: count(input.total, MAX_TASKS * 4) ?? base.total,
     done: count(input.done, MAX_TASKS * 4) ?? base.done,
     phase: label(input.phase, 40) ?? base.phase,
-    finished: typeof input.finished === 'boolean' ? input.finished : base.finished,
+    finished,
     tasks,
+    ...(finished ? { finishedAt: (base.finished ? base.finishedAt : undefined) ?? now } : {}),
   }
 }
 
@@ -317,7 +321,8 @@ export const registerCore = (on: On) => {
           if (b.type !== 'tool_use' || b.name !== PROGRESS_TOOL || typeof b.input !== 'object' || b.input === null) continue
           const input = b.input as Record<string, unknown>
           const list = await read($, agents)
-          await update($, progress, prev => withStatus(mergeProgress(prev, input), list))
+          const at = await $.clock.now()
+          await update($, progress, prev => withStatus(mergeProgress(prev, input, at), list))
         }
       }
     })
@@ -351,6 +356,24 @@ export const registerCore = (on: On) => {
       await refreshPonytail($)
     })
     return next(e)
+  })
+
+  // `/clear` ends the session (no session.start follows): the log, agents, flow, counters and the pane's marks start
+  // over. startedAt and the context figures stay; the engine measures those again.
+  on('session.end', { reason: 'clear' }, async ($, e, next) => {
+    const ended = await next(e)
+    await safe(async () => {
+      await update($, sessionLog, () => sessionLog.initial)
+      await update($, agents, () => agents.initial)
+      await update($, progress, () => progress.initial)
+      await update($, usage, u => ({ ...u, tokensTotal: 0, costUsd: 0, agentTimeMs: 0, turns: 0 }))
+      await update($, railOffset, () => railOffset.initial)
+      await update($, hallOpen, () => hallOpen.initial)
+      await update($, hallFilter, () => hallFilter.initial)
+      await update($, chamber, () => chamber.initial)
+      await update($, armedStop, () => armedStop.initial)
+    })
+    return ended
   })
 
   on('session.measure', async ($, e, next) => {

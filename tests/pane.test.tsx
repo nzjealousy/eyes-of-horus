@@ -219,7 +219,7 @@ const PANE = {
 
 // The state beneath the plugin: seeded values (unwrapped); any other key (the pane's folds) is the kit's own store.
 function seed(on: On, values: Record<string, unknown>) {
-  const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-1', sessionLog: 'log-2', usage: 'usage-1' }
+  const shapes: Record<string, string> = { agents: 'agents-1', progress: 'progress-2', sessionLog: 'log-2', usage: 'usage-1' }
   on('state.get', (_, e, next) => {
     const shape = shapes[e.key]
     // An unshaped key (phase, phaseSince) is seeded raw when given; otherwise the kit's store answers.
@@ -360,6 +360,41 @@ test('The Hall of Truth and Gods fold and unfold', async ($, on) => {
     ui = await press('agents-toggle')
     expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeDefined()
     expect(await ui.find({ key: 'agent:a1' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('Running and Finished fold apart: a folded group keeps its head and count, its cards go', async ($, on) => {
+  seed(on, SEEDED)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const press = async (key: string) => {
+      const ui = await $.ui.mount({ ...PANE, surface })
+      await ui.press({ key })
+      await ui.unmount()
+      return $.ui.mount({ ...PANE, surface })
+    }
+    const label = (open: boolean, s: string) => (surface === 'desktop' ? (open ? 'Collapse' : 'Expand') : `${open ? '▾' : '▸'} ${s}`)
+    const heads = async (ui: Awaited<ReturnType<typeof press>>) =>
+      surface === 'desktop'
+        ? (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt)).filter(a => /^(Running|Finished) · /.test(a))
+        : ['running-toggle', 'finished-toggle']
+    let ui = await press('running-toggle')
+    expect((await ui.find({ key: 'running-toggle' }))?.text).toBe(label(false, 'Running · 1'))
+    expect((await ui.find({ key: 'finished-toggle' }))?.text).toBe(label(true, 'Finished · 1'))
+    expect(await heads(ui)).toEqual(surface === 'desktop' ? ['Running · 1', 'Finished · 1'] : ['running-toggle', 'finished-toggle'])
+    expect(await ui.find({ key: 'agent:a1' })).toBeUndefined() // the running card
+    expect(await ui.find({ key: 'agent:a2' })).toBeDefined() // the finished card stays
+    await ui.unmount()
+
+    ui = await press('finished-toggle')
+    expect(await ui.find({ key: 'agent:a2' })).toBeUndefined()
+    await ui.unmount()
+
+    // Both open again for the next surface.
+    await (await press('running-toggle')).unmount()
+    ui = await press('finished-toggle')
+    expect(await ui.find({ key: 'agent:a1' })).toBeDefined()
+    expect(await ui.find({ key: 'agent:a2' })).toBeDefined()
     await ui.unmount()
   }
 })

@@ -1,0 +1,12 @@
+{
+  "name": "horus-kit",
+  "version": "0.1.0",
+  "description": "Bundle: the eyes-of-horus mod, the savvy-flow orchestrator and savvy-progress, plus /horus-kit:setup to copy a notes-vault memory and working rules.",
+  "author": { "name": "nzjealousy" },
+  "license": "MIT",
+  "dependencies": [
+    "eyes-of-horus",
+    { "name": "savvy-flow", "marketplace": "claude-kit" },
+    { "name": "savvy-progress", "marketplace": "claude-kit" }
+  ]
+}

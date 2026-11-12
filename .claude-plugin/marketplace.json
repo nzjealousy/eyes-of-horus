@@ -1,5 +1,18 @@
 {
   "name": "eyes-of-horus",
   "owner": { "name": "nzjealousy" },
-  "plugins": [{ "name": "eyes-of-horus", "source": "./" }]
+  "description": "The Eyes of Horus mod for Claude Code, plus horus-kit: a one-command bundle of the savvy-flow workflow, a notes-vault memory and setup.",
+  "allowCrossMarketplaceDependenciesOn": ["claude-kit"],
+  "plugins": [
+    {
+      "name": "eyes-of-horus",
+      "source": "./",
+      "description": "Gold-and-obsidian restyle of Claude Code: Eye of Horus, dashboard band and Gods pane."
+    },
+    {
+      "name": "horus-kit",
+      "source": "./kit",
+      "description": "Installs eyes-of-horus, savvy-flow and savvy-progress, and /horus-kit:setup copies a notes-vault memory and working rules."
+    }
+  ]
 }

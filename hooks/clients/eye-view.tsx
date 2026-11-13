@@ -44,7 +44,7 @@ export type EyeState = {
 
 /** The frame's reference size in cells (the region is MARGIN wider), and its largest: a narrower region shrinks it in this shape. */
 export const W = 82
-export const H = 32
+export const H = 19
 export const MAX_W = W
 export const MIN_H = 6
 /** The most of the region's columns `/horus-fit` may leave unused (a share, 0 to this). */

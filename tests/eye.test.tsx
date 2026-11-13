@@ -87,14 +87,14 @@ test('runs: one per colour, a blank joins its neighbour', () => {
   expect(rows.reduce((n, r) => n + r.length, 0) < (W * H) / 3).toBe(true)
 })
 
-test('the eye is 82 x 24 before layout and otherwise sized from the region width alone, in that shape', () => {
+test('the eye is 82 x 32 before layout and otherwise sized from the region width alone, in that shape', () => {
   expect(fit(0)).toEqual([W, H])
-  expect([W, H]).toEqual([82, 24])
-  // The frame leaves MARGIN columns free (full size at the desktop's 84), grows to MAX_W (2x) and its rows follow in the 82:16 shape.
-  expect([fit(200), fit(84)]).toEqual([[MAX_W, 2 * H], [W, H]])
+  expect([W, H, MAX_W]).toEqual([82, 32, 82])
+  // The frame leaves MARGIN columns free (full size at the desktop's 84), never grows past MAX_W and its rows follow in the 82:32 shape.
+  expect([fit(200), fit(84)]).toEqual([[MAX_W, H], [W, H]])
   expect([fit(42), fit(30), fit(10), fit(1)].map(f => f[0])).toEqual([40, 28, 8, 1])
   // `slack` (/horus-fit) leaves a share of the columns free too, up to MAX_SLACK; the rows follow the width.
-  expect([fit(84, 0.15), fit(84, 0.2), fit(84, 0.9), fit(84, -1)]).toEqual([[69, 20], [65, 19], fit(84, MAX_SLACK), [W, H]])
+  expect([fit(84, 0.15), fit(84, 0.2), fit(84, 0.9), fit(84, -1)]).toEqual([[69, 27], [65, 25], fit(84, MAX_SLACK), [W, H]])
   for (const slack of [0, 0.15, MAX_SLACK]) {
     for (const columns of [1, 10, 30, 60, 84, 120, 200, 400]) {
       const [w, h] = fit(columns, slack)
@@ -109,10 +109,10 @@ test('the eye is 82 x 24 before layout and otherwise sized from the region width
     return [Math.max(...xs) - Math.min(...xs) + 1, lit.filter(r => r.includes(true)).length]
   }
   const [aw, ah] = extent(W, H)
-  expect([aw, ah]).toEqual([62, 23]) // the Wedjat's tail, tear and spiral take room in the 24 rows
-  // Twice the frame draws the eye twice as large, to within a cell or two.
-  const [bw, bh] = extent(MAX_W, 2 * H)
-  expect([Math.abs(bw - 2 * aw) <= 2, Math.abs(bh - 2 * ah) <= 2]).toEqual([true, true])
+  expect([aw, ah]).toEqual([79, 31]) // the Wedjat's tail, tear and spiral take room in the 32 rows; 79 of the 82 columns
+  // Half the frame draws the eye half as large, to within a cell or two.
+  const [bw, bh] = extent(W / 2, H / 2)
+  expect([Math.abs(bw - aw / 2) <= 2, Math.abs(bh - ah / 2) <= 2]).toEqual([true, true])
   expect(extent(75, 7)).toEqual([15, 7])
   for (const [w, h] of [[82, 16], [40, 13], [24, 9], [60, 17]] as const) {
     const rows = text(frame(init('idle', rnd), w, h))

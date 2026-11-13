@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import {
   advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, MAX_SLACK, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, padRows, pads, point, shiftRows,
-  pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SPARK_INSET, sparkleLevel, twinkle, W,
+  pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SPARK_INSET, STRETCH_X, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
 import { bg, gold, goldBright, orbCore, text as white } from '../hooks/theme'
@@ -108,14 +108,14 @@ test('the eye is 82 x 19 before layout and otherwise sized from the region width
     const xs = lit.flatMap(r => r.flatMap((on, x) => (on ? [x] : [])))
     return [Math.max(...xs) - Math.min(...xs) + 1, lit.filter(r => r.includes(true)).length]
   }
-  expect(extent(W, H)).toEqual([49, 18]) // the Wedjat's tail, tear and spiral take room in the 19 rows; 49 of the 82 columns
+  expect(extent(W, H)).toEqual([73, 18]) // the Wedjat's tail, tear and spiral take room in the 19 rows; STRETCH_X makes it 73 of the 82 columns
   // The frame's shape keeps the eye inside it at every width: its lit extent never exceeds the frame.
   for (const columns of [30, 60, 84]) {
     const [w, h] = fit(columns)
     const [ew, eh] = extent(w, h)
     expect(ew <= w && eh <= h).toBe(true)
   }
-  expect(extent(75, 7)).toEqual([15, 7])
+  expect(extent(75, 7)).toEqual([26, 7]) // the old bug: fitting to an echoed 7 rows drew a tiny eye
   for (const [w, h] of [[82, 16], [40, 13], [24, 9], [60, 17]] as const) {
     const rows = text(frame(init('idle', rnd), w, h))
     expect(rows.length).toBe(h)
@@ -126,6 +126,15 @@ test('the eye is 82 x 19 before layout and otherwise sized from the region width
   expect(eyeWidth(80)).toBe(78)
   expect(eyeWidth(30)).toBe(28)
   expect(eyeWidth(5)).toBe(16)
+})
+
+test('the eye is drawn STRETCH_X wider, but its iris stays round on screen', () => {
+  const pose = { ox: 0, oy: 0, open: 1, t: 0 }
+  // 4 screen units across the iris is inside it, 7 is the sclera; both across (x, scaled by the stretch) and down (y).
+  expect([eyeCell(4 / STRETCH_X, 0, pose)[0] > 0.55, eyeCell(7 / STRETCH_X, 0, pose)[0] < 0.45]).toEqual([true, true])
+  expect([eyeCell(0, 4, pose)[0] > 0.55, eyeCell(0, 7, pose)[0] < 0.45]).toEqual([true, true])
+  // The iris travels with the gaze in eye units, so it still sits inside the lids at the largest reach.
+  expect(eyeCell(6 + 4 / STRETCH_X, 0, { ...pose, ox: 6 })[0] > 0.55).toBe(true)
 })
 
 test('the open eye shows a gold iris, a dark pupil and a white highlight; the lids meet when shut', () => {

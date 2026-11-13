@@ -167,10 +167,13 @@ const MID_Y = 3
 /** How much of the frame the eye fills, on its tighter axis. */
 const FILL = 0.94
 
-/** Eye units of a cell centre: x in columns, y in half-rows (a cell is about twice as tall as wide), scaled so the eye fills FILL of the frame. */
+/** How much wider than its natural shape the eye is drawn (x only), for more glyph detail across: the iris, pupil and highlight are kept round. */
+export const STRETCH_X = 1.5
+
+/** Eye units of a cell centre: x in columns (STRETCH_X columns to a unit's width), y in half-rows (a cell is about twice as tall as wide), scaled so the eye fills FILL of the frame. */
 function units(x: number, y: number, w: number, h: number): [number, number] {
-  const k = FILL * Math.min(w / EXT_W, (2 * h) / EXT_H)
-  return [(x + 0.5 - w / 2) / k + MID_X, ((y + 0.5 - h / 2) * 2) / k + MID_Y]
+  const k = FILL * Math.min(w / (EXT_W * STRETCH_X), (2 * h) / EXT_H)
+  return [(x + 0.5 - w / 2) / (k * STRETCH_X) + MID_X, ((y + 0.5 - h / 2) * 2) / k + MID_Y]
 }
 /** Upper and lower lid heights at `px`: open, they part; at 0 they meet in one line just below the middle. */
 export function lids(px: number, open: number): [number, number] {
@@ -231,12 +234,14 @@ export function eyeCell(px: number, py: number, p: Pose): [number, string] {
     const lum = 0.16 * Math.exp(-e * 7) * (0.85 + 0.15 * Math.sin(p.t / 500 + Math.atan2(py, px) * 2))
     return [lum < 0.035 ? 0 : lum, lum > 0.11 ? aqua : aquaDim]
   }
-  const r = Math.hypot(px - p.ox, py - p.oy)
-  if (Math.hypot(px - p.ox + 1.8, py - p.oy + 1.6) < 1.3) return [1, text]
+  // The iris and pupil are round on screen: an x distance is scaled back by the stretch.
+  const dx = (px - p.ox) * STRETCH_X
+  const r = Math.hypot(dx, py - p.oy)
+  if (Math.hypot(dx + 1.8, py - p.oy + 1.6) < 1.3) return [1, text]
   if (r < 2.4) return [0, purpleDim]
   if (r < 6.2) {
     const q = (r - 2.4) / 3.8
-    const fibre = 0.07 * Math.sin(Math.atan2(py - p.oy, px - p.ox) * 9)
+    const fibre = 0.07 * Math.sin(Math.atan2(py - p.oy, dx) * 9)
     const lum = 0.95 - 0.35 * q + fibre - (q > 0.85 ? 0.22 : 0)
     return [lum, q > 0.85 ? AMBER_DARK : (IRIS[Math.floor(q * IRIS.length)] ?? warn)]
   }

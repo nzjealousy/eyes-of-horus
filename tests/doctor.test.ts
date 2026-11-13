@@ -1,6 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 
-import { formatDoctor, paneState, probeLine } from '../hooks/doctor'
+import { fitArg, formatDoctor, MAX_FIT, paneState, probeLine } from '../hooks/doctor'
+
+test('fitArg: a whole percent up to the maximum, off is 0, empty asks, anything else is refused', () => {
+  expect([fitArg('20'), fitArg(' 15% '), fitArg('0'), fitArg('off'), fitArg(''), fitArg(String(MAX_FIT))]).toEqual([20, 15, 0, 0, '', MAX_FIT])
+  for (const bad of [String(MAX_FIT + 1), '-5', '2.5', 'wide', '20 30', '1000']) expect(fitArg(bad)).toBeUndefined()
+})
 
 test('formatDoctor: one line per check, a failed check is a line', () => {
   expect(formatDoctor([['Surfaces', 'terminal, desktop'], ['Agents', new Error('x'.repeat(200))]])).toBe(

@@ -105,6 +105,8 @@ declare module 'claude-code' {
       paneCollapsed: Shaped<{ session: boolean; agents: boolean; running: boolean; finished: boolean }>
       /** Written by `/horus-motion` (doctor.ts): whether the mod's drawings animate (default true). */
       motion: boolean
+      /** Written by `/horus-fit` (doctor.ts): percent of the eye's width left free, 0 to 40 (default 0). */
+      fitSlack: number
       /** Written by the pane (core resets it on /clear): the Hall of Truth's filter chip. */
       hallFilter: HorusHallFilter
       /** Written by the pane (core resets it on /clear): turns the user folded by hand; n >= 0 opened turn n, n < 0 closed turn -n-1. */

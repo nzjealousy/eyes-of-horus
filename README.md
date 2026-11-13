@@ -102,6 +102,7 @@ It asks before every write, skips existing files unless you say otherwise, and n
 | `/horus-doctor` | One line per part: surfaces, panes, the ponytail flag, motion, stored counts, and whether a plugin can call TaskStop (a harmless probe). |
 | `/temple` | Opens the Temple pane. |
 | `/horus-motion [on\|off]` | The mod's animations on or off; no argument toggles. On by default. |
+| `/horus-fit [0-40]` | Percent of the eye's width to leave free. 0 (the default) is full size. If the eye's rows wrap onto a second line in your desktop font, try `/horus-fit 20`. Saved across sessions. |
 | `/horus-kit:setup` | The kit's guided setup (horus-kit only). |
 
 ## Optional extras
@@ -131,6 +132,7 @@ horus-kit only references these plugins; it does not copy their code.
 - A single running tool call cannot be stopped on its own; Stop turn stops the whole turn.
 - Voice-over needs a system speech synthesizer; without one it shows subtitles only.
 - The eye follows the pointer only while the pointer is over it.
+- On some desktop fonts the eye's rows are wider than the app expects and wrap; `/horus-fit 20` leaves a fifth of the width free (see Commands).
 - Animations ignore the system reduced-motion setting by design; use `/horus-motion off`.
 - Tested on desktop app 4.23118 with engine 2.1.317. Since then the mod also tries the newer `$.theme.set` backdrop call first (engine 2.1.319 removed `$.ui.backdrop`); the Temple and the always-on animations have not yet been checked in the real app.
 

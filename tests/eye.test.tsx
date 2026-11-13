@@ -2,8 +2,8 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, padRows, pads, point, shiftRows,
-  pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SLACK, SPARK_INSET, sparkleLevel, twinkle, W,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, MAX_SLACK, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, padRows, pads, point, shiftRows,
+  pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SPARK_INSET, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
 import { bg, gold, goldBright, orbCore, text as white } from '../hooks/theme'
@@ -90,13 +90,17 @@ test('runs: one per colour, a blank joins its neighbour', () => {
 test('the eye is 82 x 16 before layout and otherwise sized from the region width alone, in that shape', () => {
   expect(fit(0)).toEqual([W, H])
   expect([W, H]).toEqual([82, 16])
-  // The frame leaves SLACK of the columns and MARGIN more free, grows to MAX_W (2x) and its rows follow in the 82:16 shape.
-  expect([fit(200), fit(84)]).toEqual([[MAX_W, 2 * H], [69, 13]])
-  expect([fit(42), fit(30), fit(10), fit(1)].map(f => f[0])).toEqual([33, 23, 6, 1])
-  for (const columns of [1, 10, 30, 60, 84, 120, 200, 400]) {
-    const [w, h] = fit(columns)
-    expect(w + MARGIN <= Math.max(columns, 3) && w <= MAX_W && h >= MIN_H).toBe(true)
-    if (w >= 2 * MIN_H * 5) expect(Math.abs(h - (w * H) / W) <= 0.5).toBe(true)
+  // The frame leaves MARGIN columns free (full size at the desktop's 84), grows to MAX_W (2x) and its rows follow in the 82:16 shape.
+  expect([fit(200), fit(84)]).toEqual([[MAX_W, 2 * H], [W, H]])
+  expect([fit(42), fit(30), fit(10), fit(1)].map(f => f[0])).toEqual([40, 28, 8, 1])
+  // `slack` (/horus-fit) leaves a share of the columns free too, up to MAX_SLACK; the rows follow the width.
+  expect([fit(84, 0.15), fit(84, 0.2), fit(84, 0.9), fit(84, -1)]).toEqual([[69, 13], [65, 13], fit(84, MAX_SLACK), [W, H]])
+  for (const slack of [0, 0.15, MAX_SLACK]) {
+    for (const columns of [1, 10, 30, 60, 84, 120, 200, 400]) {
+      const [w, h] = fit(columns, slack)
+      expect(w + MARGIN <= Math.max(columns, 3) && w <= MAX_W && h >= MIN_H).toBe(true)
+      if (w >= 2 * MIN_H * 5) expect(Math.abs(h - (w * H) / W) <= 0.5).toBe(true)
+    }
   }
   // The desktop region measured live: 77 x 16 once the frame is 16 rows. Fitting to its echoed 7 rows drew the eye 23 x 7.
   const extent = (w: number, h: number) => {
@@ -306,7 +310,7 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   seed(on, { phase: 'thinking', turnSeq: 2, tail: 0, voice: VOICE })
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
-  expect(eye?.props.props).toEqual({ mode: 'thinking', shift: 0 }) // the terminal's cells are as wide as its glyphs: no shift
+  expect(eye?.props.props).toEqual({ mode: 'thinking', shift: 0, slack: 0 }) // the terminal's cells are as wide as its glyphs: no shift; no width held back by default
   // The region is 84 wide with no viewport; its frame's rows plus the starry rows above and below.
   const [, fh] = fit(84)
   const [padT, padB] = pads(fh)
@@ -326,6 +330,21 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   await ui.unmount()
 })
 
+test('/horus-fit: the saved percent reaches the eye as a share, and the eye draws narrower rows', async ($, on) => {
+  seed(on, { phase: 'idle', turnSeq: 2, tail: 0, voice: VOICE, fitSlack: 20 })
+  const ui = await $.ui.mount(row('eye-2-end', 'terminal'))
+  const eye = await ui.find({ type: 'Client', key: 'eye' })
+  expect(eye?.props.props).toEqual({ mode: 'idle', shift: 0, slack: 0.2 })
+  const [fw, fh] = fit(84, 0.2)
+  expect([fw < W, eye?.props.height]).toEqual([true, fh + pads(fh)[0] + pads(fh)[1]])
+  await ui.resize({ columns: 84, rows: 7, in: 'eye' })
+  await ui.advance(400)
+  const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
+  expect(rows.length).toBe(fh + pads(fh)[0] + pads(fh)[1])
+  for (const r of rows) expect([...r.text].length).toBe(fw)
+  await ui.unmount()
+})
+
 // Only glyphs one cell wide in any mono face: printable ASCII, the no-break space and the middle dot.
 const NARROW = /^[ -~ ·]*$/
 
@@ -333,7 +352,7 @@ test('every eye row is one line of exactly the frame width, in single-width glyp
   const m = init('idle', rnd)
   for (const columns of [30, 40, 60, 84]) {
     const [w, h] = fit(columns)
-    expect(w).toBe(Math.floor(columns * (1 - SLACK)) - MARGIN)
+    expect(w).toBe(columns - MARGIN)
     for (let t = 0; t < 4000; t += 300) {
       m.t = t
       for (const [rows, width] of [[text(frame(m, w, h)), w]] as const) {
@@ -514,7 +533,7 @@ test('on the desktop the idle eye sits under the reply once the hide window ends
   await clock.advance(HIDE_MS)
   ui = await $.ui.mount(reply('m1', 'All tests pass.'))
   expect((await ui.find({ type: 'Text' }))?.text).toBe('engine')
-  expect((await ui.find({ type: 'Client', key: 'eye' }))?.props.props).toEqual({ mode: 'idle', shift: 2 }) // the desktop's cell is wider than its glyph: moved right
+  expect((await ui.find({ type: 'Client', key: 'eye' }))?.props.props).toEqual({ mode: 'idle', shift: 2, slack: 0 }) // the desktop's cell is wider than its glyph: moved right
   // No width on either Box: the desktop app mounts no Client in a reply whose root Box has width="100%".
   const rows = (await ui.findAll({ type: 'Box' })).map(b => [b.props.width, b.props.flexDirection, b.props.justifyContent])
   expect(rows).toEqual([[undefined, 'column', undefined], [undefined, 'row', 'center']])

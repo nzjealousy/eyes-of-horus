@@ -8,12 +8,15 @@ import { aqua, aquaDim, bg, dim, gold, goldBright, orbCore, purple, purpleDim, t
 
 export type EyeMode = 'idle' | 'thinking' | 'tool'
 /** `shift`: cells to move the drawing right, for a surface whose cell is wider than its glyph (desktop). */
-export type EyeProps = { mode: EyeMode; shift?: number }
+/** `slack`: the share of the region's width left free (`/horus-fit`), for a font whose rows wrap. */
+export type EyeProps = { mode: EyeMode; shift?: number; slack?: number }
 export type Seg = [string, string]
 
 export type EyeState = {
   /** Cells the drawing is moved right (EyeProps.shift), clamped by the view. */
   shift?: number
+  /** The share of width left free (EyeProps.slack), clamped by the view. */
+  slack?: number
   mode: EyeMode
   t: number
   /** Autonomous gaze (saccades), each -1 | 0 | 1. */
@@ -44,8 +47,8 @@ export const W = 82
 export const H = 16
 export const MAX_W = 2 * W
 export const MIN_H = 6
-/** Share of the region's columns left unused, so a font wider than the app's cell estimate still fits (rows wrapped on one desktop: issue #1). */
-export const SLACK = 0.15
+/** The most of the region's columns `/horus-fit` may leave unused (a share, 0 to this). */
+export const MAX_SLACK = 0.4
 export const FRAME = 90
 export const RELEASE_MS = 2500
 /** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
@@ -370,25 +373,26 @@ export const keyOf = (rows: Seg[][]) => rows.map(r => r.map(s => s.join('')).joi
 const asMode = (v: unknown): EyeMode => (v === 'thinking' || v === 'tool' ? v : 'idle')
 
 /**
- * The frame's size in cells, from the laid-out region's width alone: SLACK of the columns and MARGIN more left free,
- * at most MAX_W (W before the first layout), and rows in the reference shape W:H, at least MIN_H. The desktop lays a
- * Client out as tall as what it draws, not as its `height` (asked for 16, a 7-row frame measured 7), so its rows only
- * echo the frame and fitting to them locked the eye small: the height is never read.
+ * The frame's size in cells, from the laid-out region's width alone: `slack` (a share, 0 by default) of the columns and
+ * MARGIN more left free, at most MAX_W (W before the first layout), and rows in the reference shape W:H, at least MIN_H.
+ * The slack is for a font wider than the app's cell estimate, whose rows wrap (issue #1). The desktop lays a Client out
+ * as tall as what it draws, not as its `height` (asked for 16, a 7-row frame measured 7), so its rows only echo the
+ * frame and fitting to them locked the eye small: the height is never read.
  */
-export const fit = (columns: number): [number, number] => {
-  const w = columns > 0 ? clamp(Math.floor(columns * (1 - SLACK)) - MARGIN, 1, MAX_W) : W
+export const fit = (columns: number, slack = 0): [number, number] => {
+  const w = columns > 0 ? clamp(Math.floor(columns * (1 - clamp(slack, 0, MAX_SLACK))) - MARGIN, 1, MAX_W) : W
   return [w, Math.max(MIN_H, Math.round((w * H) / W))]
 }
 
 /** The pointer at cell (x, y) of the laid-out region, `columns` wide: the frame sits centred in it, so x is moved onto the frame first. */
 export function pointIn(m: EyeState, x: number, y: number, columns: number) {
-  const [w, h] = fit(columns)
-  point(m, x - ((columns || w + MARGIN) - w) / 2 - (m.shift ?? 0), y - pads(h)[0], w, h)
+  const [w, h] = fit(columns, m.slack)
+  point(m, x -((columns || w + MARGIN) - w) / 2 - (m.shift ?? 0), y - pads(h)[0], w, h)
 }
 
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number): boolean {
-  const [w, h] = fit(columns)
+  const [w, h] = fit(columns, m.slack)
   const next = frame(m, w, h)
   const [padTop, padBottom] = pads(h)
   const top = padRows(padTop, w, m.t, 11)
@@ -462,7 +466,8 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
   }
   m.mode = asMode(props?.mode)
   m.shift = clamp(Math.round(Number(props?.shift) || 0), 0, 4)
-  const [w] = fit(surface.columns)
+  m.slack = clamp(Number(props?.slack) || 0, 0, MAX_SLACK)
+  const [w] = fit(surface.columns, m.slack)
   const { Box } = surface.elements
   // The frame centred in its region, the margin split either side, `pads(h)` starry rows above and below. Rows,
   // not padding: the desktop did not honour the Box's paddingTop. All in one black block, so the stars reach the top.

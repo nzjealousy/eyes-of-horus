@@ -13,6 +13,7 @@ const phase = atom({ plugin: 'eyes-of-horus', key: 'phase' } as const, core.phas
 const tail = atom({ plugin: 'eyes-of-horus', key: 'tail' } as const, core.tail.initial)
 const turnSeq = atom({ plugin: 'eyes-of-horus', key: 'turnSeq' } as const, core.turnSeq.initial)
 const voice = atom({ plugin: 'eyes-of-horus', key: 'voice' } as const, core.voice.initial, { shape: core.voice.shape! })
+const fitSlack = atom({ plugin: 'eyes-of-horus', key: 'fitSlack' } as const, core.fitSlack.initial)
 
 const PLUGIN = 'eyes-of-horus'
 export const HIDE_MS = 8000
@@ -173,15 +174,17 @@ const DESKTOP_SHIFT = 2
 // `shift`: cells to move the drawing right (the desktop's cell is wider than its glyph, which left the eye left of centre).
 // shortcut: with no viewport (the desktop) the region is asked at the reference width, not MAX_W, since the app does not
 // say how wide its pane is; raise this default to grow the desktop eye once a wider ask is known to be clamped.
-function view(Client: ElementConstructor<ClientProps>, p: HorusPhase, columns = EYE_W + MARGIN + 2, shift = 0) {
+// `slackPct`: percent of the width left free (`/horus-fit`), so rows do not wrap in a font wider than the app expects.
+function view(Client: ElementConstructor<ClientProps>, p: HorusPhase, columns = EYE_W + MARGIN + 2, shift = 0, slackPct = 0) {
   const width = eyeWidth(columns)
-  const [, rows] = fit(width)
+  const slack = slackPct / 100
+  const [, rows] = fit(width, slack)
   const [padTop, padBottom] = pads(rows)
   return (
     <Client
       key="eye"
       module="./clients/eye-view.tsx"
-      props={{ mode: p === 'outputting' ? 'idle' : p, shift }}
+      props={{ mode: p === 'outputting' ? 'idle' : p, shift, slack }}
       width={width}
       height={rows + padTop + padBottom}
     />
@@ -287,7 +290,7 @@ export const registerEye = (on: On) => {
     const { Box, Client } = $.ui.resolve(e)
     return (
       <Box width="100%" flexDirection="row" justifyContent="center">
-        {view(Client, p, e.viewport?.columns)}
+        {view(Client, p, e.viewport?.columns, 0, await read($, fitSlack))}
       </Box>
     )
   }).catch(($, e, next) => next(e))
@@ -307,7 +310,7 @@ export const registerEye = (on: On) => {
       <Box flexDirection="column">
         {await next(e)}
         <Box flexDirection="row" justifyContent="center">
-          {view(Client, p, e.viewport?.columns, DESKTOP_SHIFT)}
+          {view(Client, p, e.viewport?.columns, DESKTOP_SHIFT, await read($, fitSlack))}
         </Box>
       </Box>
     )

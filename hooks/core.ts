@@ -47,6 +47,8 @@ export const paneCollapsed = atom(
 
 /** Whether the mod's drawings animate (`/horus-motion`, doctor.ts); the OS reduced-motion setting is not consulted. */
 export const motion = atom({ plugin: 'eyes-of-horus', key: 'motion' } as const, true)
+/** Percent of the eye's width left free (`/horus-fit`, doctor.ts), 0 to 40: for a font wider than the app's cell estimate, whose rows wrap. */
+export const fitSlack = atom({ plugin: 'eyes-of-horus', key: 'fitSlack' } as const, 0)
 /** The Hall of Truth's filter chip and the user's turn fold marks (see hall.ts isTurnOpen). Written by the pane (and reset on /clear). */
 export const hallFilter = atom({ plugin: 'eyes-of-horus', key: 'hallFilter' } as const, 'all')
 export const hallOpen = atom({ plugin: 'eyes-of-horus', key: 'hallOpen' } as const, [], { shape: 'hall-open-1' })

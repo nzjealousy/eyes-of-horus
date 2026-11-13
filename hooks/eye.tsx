@@ -165,14 +165,18 @@ const lastAssistantText = async ($: $) =>
 /** The eye's region width: its full frame and the frame's margin, narrower on a narrow surface. */
 export const eyeWidth = (columns = 80) => Math.max(16, Math.min(EYE_W + MARGIN, columns - 2))
 
+/** Cells the desktop eye moves right of centre (about 14 px at its cell width). */
+const DESKTOP_SHIFT = 2
+
 // The eye, sized explicitly so a surface never lays the region out at zero.
 // An unknown viewport gets the full size; the Client still clamps its width to the region it is laid out in.
-function view(Client: ElementConstructor<ClientProps>, p: HorusPhase, columns = EYE_W + MARGIN + 2) {
+// `shift`: cells to move the drawing right (the desktop's cell is wider than its glyph, which left the eye left of centre).
+function view(Client: ElementConstructor<ClientProps>, p: HorusPhase, columns = EYE_W + MARGIN + 2, shift = 0) {
   return (
     <Client
       key="eye"
       module="./clients/eye-view.tsx"
-      props={{ mode: p === 'outputting' ? 'idle' : p }}
+      props={{ mode: p === 'outputting' ? 'idle' : p, shift }}
       width={eyeWidth(columns)}
       height={EYE_H + PAD_TOP + PAD_BOTTOM}
     />
@@ -298,7 +302,7 @@ export const registerEye = (on: On) => {
       <Box flexDirection="column">
         {await next(e)}
         <Box flexDirection="row" justifyContent="center">
-          {view(Client, p, e.viewport?.columns)}
+          {view(Client, p, e.viewport?.columns, DESKTOP_SHIFT)}
         </Box>
       </Box>
     )

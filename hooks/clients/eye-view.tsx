@@ -7,10 +7,13 @@ import { aqua, aquaDim, bg, dim, gold, goldBright, orbCore, purple, purpleDim, t
 // the theme; star sparkles twinkle in the empty cells around it. All motion lives here, on the frame clock.
 
 export type EyeMode = 'idle' | 'thinking' | 'tool'
-export type EyeProps = { mode: EyeMode }
+/** `shift`: cells to move the drawing right, for a surface whose cell is wider than its glyph (desktop). */
+export type EyeProps = { mode: EyeMode; shift?: number }
 export type Seg = [string, string]
 
 export type EyeState = {
+  /** Cells the drawing is moved right (EyeProps.shift), clamped by the view. */
+  shift?: number
   mode: EyeMode
   t: number
   /** Autonomous gaze (saccades), each -1 | 0 | 1. */
@@ -30,6 +33,9 @@ export type EyeState = {
   sweepAt: number
   /** The drawn frame and its text key: the module redraws only when the key changes. */
   rows: Seg[][]
+  /** The starry rows above and below the frame (PAD_TOP and PAD_BOTTOM of them). */
+  top: Seg[][]
+  bottom: Seg[][]
   key: string
 }
 
@@ -40,8 +46,8 @@ export const FRAME = 90
 export const RELEASE_MS = 2500
 /** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
 export const MARGIN = 2
-/** Empty rows above and below the frame, so the eye does not sit tight against the reply or what follows. */
-export const PAD_TOP = 2
+/** Starry black rows above and below the frame, so the eye does not sit tight against the reply or what follows. */
+export const PAD_TOP = 4
 export const PAD_BOTTOM = 1
 /** Columns and rows at the frame's edge where no sparkle goes, so a star never touches the region's edge. */
 export const SPARK_INSET: readonly [number, number] = [2, 1]
@@ -257,6 +263,20 @@ const eyeSparkles = (w: number, h: number) => {
   return s
 }
 
+const padCache = new Map<string, Sparkle[]>()
+/** `n` blank rows of `w` cells with stars in them, for the black above and below the frame (same density and look as the frame's). */
+export function padRows(n: number, w: number, t: number, seed: number): Seg[][] {
+  const k = `${n}x${w}:${seed}`
+  let list = padCache.get(k)
+  if (!list) {
+    list = scatter(w, n, x => x >= SPARK_INSET[0] && x < w - SPARK_INSET[0], seed)
+    padCache.set(k, list)
+  }
+  const grid = Array.from({ length: n }, () => Array.from({ length: w }, (): Seg => [BLANK, bg]))
+  sparkle(grid, list, t)
+  return grid.map(merge)
+}
+
 // ---- motion ---------------------------------------------------------------------------------------------------
 
 export const GAZES: ReadonlyArray<readonly [number, number]> = [
@@ -277,6 +297,8 @@ export function init(mode: EyeMode, rnd: () => number): EyeState {
     nextSweep: 2000 + rnd() * 3000,
     sweepAt: -1,
     rows: [],
+    top: [],
+    bottom: [],
     key: '',
   }
 }
@@ -351,17 +373,41 @@ export const fit = (columns: number): [number, number] => [columns > 0 ? clamp(c
 /** The pointer at cell (x, y) of the laid-out region, `columns` wide: the frame sits centred in it, so x is moved onto the frame first. */
 export function pointIn(m: EyeState, x: number, y: number, columns: number) {
   const [w, h] = fit(columns)
-  point(m, x - ((columns || w + MARGIN) - w) / 2, y - PAD_TOP, w, h)
+  point(m, x - ((columns || w + MARGIN) - w) / 2 - (m.shift ?? 0), y - PAD_TOP, w, h)
 }
 
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number): boolean {
-  const next = frame(m, ...fit(columns))
-  const key = keyOf(next)
+  const [w, h] = fit(columns)
+  const next = frame(m, w, h)
+  const top = padRows(PAD_TOP, w, m.t, 11)
+  const bottom = padRows(PAD_BOTTOM, w, m.t, 23)
+  const key = keyOf([...top, ...next, ...bottom])
   if (key === m.key) return false
   m.rows = next
+  m.top = top
+  m.bottom = bottom
   m.key = key
   return true
+}
+
+/** The rows moved `n` cells right: `n` blanks in front, the same number cut off the end, so every row keeps its width. */
+export function shiftRows(rows: Seg[][], n: number): Seg[][] {
+  if (n <= 0) return rows
+  return rows.map(row => {
+    let cut = n
+    const kept: Seg[] = []
+    for (let k = row.length - 1; k >= 0; k--) {
+      const [text, color] = row[k]!
+      const chars = [...text]
+      if (cut >= chars.length) cut -= chars.length
+      else {
+        kept.unshift([chars.slice(0, chars.length - cut).join(''), color])
+        cut = 0
+      }
+    }
+    return [[' '.repeat(n), bg] as Seg, ...kept]
+  })
 }
 
 /**
@@ -404,12 +450,14 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
     m = s
   }
   m.mode = asMode(props?.mode)
+  m.shift = clamp(Math.round(Number(props?.shift) || 0), 0, 4)
   const [w] = fit(surface.columns)
   const { Box } = surface.elements
-  // The frame centred in its region, the margin split either side, PAD_TOP empty rows above and PAD_BOTTOM below.
+  // The frame centred in its region, the margin split either side, PAD_TOP starry rows above and PAD_BOTTOM below. Rows,
+  // not padding: the desktop did not honour the Box's paddingTop. All in one black block, so the stars reach the top.
   return (
-    <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN} paddingTop={PAD_TOP} paddingBottom={PAD_BOTTOM}>
-      {draw(surface.elements, m.rows, w)}
+    <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN} backgroundColor={bg}>
+      {draw(surface.elements, shiftRows([...m.top, ...m.rows, ...m.bottom], m.shift), w)}
     </Box>
   )
 }

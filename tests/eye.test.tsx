@@ -2,11 +2,11 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, PAD_BOTTOM, PAD_TOP, point,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, PAD_BOTTOM, PAD_TOP, padRows, point, shiftRows,
   pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SPARK_INSET, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
-import { gold, goldBright, orbCore, text as white } from '../hooks/theme'
+import { bg, gold, goldBright, orbCore, text as white } from '../hooks/theme'
 
 const rnd = () => 0.5
 const text = (rows: Seg[][]) => rows.map(r => r.map(s => s[0]).join(''))
@@ -294,7 +294,7 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   seed(on, { phase: 'thinking', turnSeq: 2, tail: 0, voice: VOICE })
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
-  expect(eye?.props.props).toEqual({ mode: 'thinking' })
+  expect(eye?.props.props).toEqual({ mode: 'thinking', shift: 0 }) // the terminal's cells are as wide as its glyphs: no shift
   // 16 eye rows plus PAD_TOP empty rows above and PAD_BOTTOM below.
   expect([eye?.props.width, eye?.props.height]).toEqual([82 + MARGIN, 16 + PAD_TOP + PAD_BOTTOM])
   const box = await ui.find({ type: 'Box' })
@@ -302,7 +302,7 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   await ui.pointer({ type: 'move', x: 81, y: 8, in: 'eye' })
   await ui.advance(400)
   const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
-  expect(rows.length).toBe(16)
+  expect(rows.length).toBe(16 + PAD_TOP + PAD_BOTTOM)
   for (const r of rows) {
     expect(r.props.mono).toBe(true)
     expect([...r.text].length).toBe(82)
@@ -340,16 +340,39 @@ for (const columns of [30, 40, 60, 84]) {
     await ui.resize({ columns, rows: 7, in: 'eye' })
     await ui.advance(400)
     const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
-    expect(rows.length).toBe(H)
+    expect(rows.length).toBe(H + PAD_TOP + PAD_BOTTOM)
     for (const r of rows) expect([...r.text].length).toBe(columns - MARGIN)
     const [outer, frameBox] = await ui.findAll({ type: 'Box', in: 'eye' })
-    // Still 16 Text rows: the breathing room is the outer Box's padding, not extra rows of the frame.
-    expect([outer?.props.width, outer?.props.alignItems, outer?.props.paddingTop, outer?.props.paddingBottom]).toEqual([columns, 'center', PAD_TOP, PAD_BOTTOM])
+    // Still 16 frame rows: the breathing room is PAD_TOP starry rows above and PAD_BOTTOM below, not padding (the desktop ignored it).
+    // The outer Box is black too, so the pad rows above and below the eye are not left as the app's own colour.
+    expect([outer?.props.width, outer?.props.alignItems, outer?.props.backgroundColor]).toEqual([columns, 'center', bg])
+    const blank = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap !== 'truncate-end' && t.text === ' ')
+    expect(blank.length).toBe(0) // the pad rows are drawn like the frame's, as rows of runs
     // The rows are centred inside the frame too, so glyphs narrower than a laid-out cell (desktop) stay in the middle.
     expect([frameBox?.props.width, frameBox?.props.overflow, frameBox?.props.alignItems]).toEqual([columns - MARGIN, 'hidden', 'center'])
     await ui.unmount()
   })
 }
+
+test('the black rows above and below the frame hold twinkling stars, one glyph wide and clear of the side edges', () => {
+  for (const w of [30, 82]) {
+    const seen = new Set<string>()
+    for (let t = 0; t < 6000; t += 250) {
+      const top = padRows(PAD_TOP, w, t, 11)
+      expect(top.length).toBe(PAD_TOP)
+      for (const r of top) {
+        const line = r.map(([s]) => s).join('')
+        expect([...line].length).toBe(w)
+        expect(NARROW.test(line)).toBe(true)
+        expect(line.slice(0, SPARK_INSET[0]).trim()).toBe('')
+        expect(line.slice(w - SPARK_INSET[0]).trim()).toBe('')
+        for (const ch of line) if (ch.trim() !== '') seen.add(ch)
+      }
+      expect(padRows(PAD_BOTTOM, w, t, 23).length).toBe(PAD_BOTTOM)
+    }
+    expect(seen.size > 1).toBe(true) // they twinkle through more than one glyph
+  }
+})
 
 test('the frame sits in the middle of its region: equal margins either side, one cell apart at most', () => {
   for (const columns of [17, 30, 31, 40, 41, 60, 77, 84, 85, 120, 201]) {
@@ -473,7 +496,7 @@ test('on the desktop the idle eye sits under the reply once the hide window ends
   await clock.advance(HIDE_MS)
   ui = await $.ui.mount(reply('m1', 'All tests pass.'))
   expect((await ui.find({ type: 'Text' }))?.text).toBe('engine')
-  expect((await ui.find({ type: 'Client', key: 'eye' }))?.props.props).toEqual({ mode: 'idle' })
+  expect((await ui.find({ type: 'Client', key: 'eye' }))?.props.props).toEqual({ mode: 'idle', shift: 2 }) // the desktop's cell is wider than its glyph: moved right
   // No width on either Box: the desktop app mounts no Client in a reply whose root Box has width="100%".
   const rows = (await ui.findAll({ type: 'Box' })).map(b => [b.props.width, b.props.flexDirection, b.props.justifyContent])
   expect(rows).toEqual([[undefined, 'column', undefined], [undefined, 'row', 'center']])
@@ -490,4 +513,19 @@ test('on the desktop the idle eye sits under the reply once the hide window ends
   expect(diag).toContain('last $.ui.place: eye-0-end placed (r), 8.0s ago')
   expect(diag).toContain('reply known: 23 chars')
   expect(diag).toContain('desktop reply: m1 -> eye')
+})
+
+test('shiftRows moves every row right by n cells and keeps its width; the pointer is read against the shifted drawing', () => {
+  const rows: [string, string][][] = [[['abc', 'x'], ['de', 'y']], [['fghij', 'z']]]
+  expect(shiftRows(rows, 0)).toBe(rows)
+  const out = shiftRows(rows, 2)
+  expect(out.map(r => r.map(([t]) => t).join(''))).toEqual(['  abc', '  fgh'])
+  for (const r of out) expect(r.map(([t]) => [...t].length).reduce((a, b) => a + b, 0)).toBe(5)
+  const m = init('idle', rnd)
+  m.shift = 2
+  pointIn(m, 40 + 2, PAD_TOP + H / 2 - 0.5, 80)
+  const [w] = fit(80)
+  const centred = init('idle', rnd)
+  pointIn(centred, 40 - ((80 - w) / 2 - 1) + (80 - w) / 2 - 1, PAD_TOP + H / 2 - 0.5, 80)
+  expect(look(m)).toEqual(look(centred))
 })

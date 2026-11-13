@@ -2,7 +2,7 @@
 
 A Claude Code mod that dresses the desktop app and the terminal in gold and obsidian, and shows what Claude and its agents are doing as Egyptian gods at work.
 
-![The ASCII Eye of Horus, glancing around and blinking](docs/img/eye.svg)
+![A realistic ASCII eye on shaded skin, with a heavy kohl line and the Eye of Horus markings, glancing around and blinking](docs/img/eye.svg)
 
 The pictures in this README are drawn by the mod's own drawing code from made-up sample data (see [Develop](#develop)). They are not screenshots.
 
@@ -10,7 +10,7 @@ The pictures in this README are drawn by the mod's own drawing code from made-up
 
 ### The eye
 
-An ASCII Eye of Horus sits centred under the latest reply. It glances around, blinks, follows the pointer while the pointer is over it, and narrows while a tool runs. With voice-over on (`/voiceover on`), an orb with subtitles reads replies aloud.
+A realistic ASCII eye sits centred under the latest reply: a photo-like crop of skin drawn in shaded text, with a heavy kohl line and wing, lashes, a feathered brow, and the teardrop and spiral of the Eye of Horus. It glances around, blinks, follows the pointer while the pointer is over it, and narrows while a tool runs. With voice-over on (`/voiceover on`), an orb with subtitles reads replies aloud.
 
 ### The dashboard band
 

@@ -2,11 +2,11 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAP_TOP, GAZES, gazeToward, H, init, lids, look, MARGIN, leftOf, merge, MAX_SLACK, MAX_W, MIN_H, openness, OVERFILL, overfill, PAD_BOTTOM, PAD_TOP, pads, point, shiftRows,
-  pointIn, RAMP, redraw, RELEASE_MS, type Seg, shade, STRETCH_X, usable, W,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAP_TOP, GAZES, gazeToward, H, init, lids, look, MARGIN, leftOf, merge, MAX_SLACK, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, pads, point, shiftRows,
+  pointIn, RAMP, redraw, RELEASE_MS, type Seg, shade, SKIN_BG, STRETCH_X, usable, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
-import { bg, dim, gold, goldBright, text as white } from '../hooks/theme'
+import { dim, gold, goldBright, text as white } from '../hooks/theme'
 
 const rnd = () => 0.5
 const text = (rows: Seg[][]) => rows.map(r => r.map(s => s[0]).join(''))
@@ -418,7 +418,7 @@ for (const columns of [30, 40, 60, 84]) {
     expect(blank.length).toBe(GAP_TOP) // the gap above the picture; the pad rows are drawn like the frame's, as rows of runs
     expect(fw <= columns - MARGIN).toBe(true)
     // The picture is region-wide and black behind its glyphs.
-    expect([pictureBox?.props.width, pictureBox?.props.overflow, pictureBox?.props.backgroundColor]).toEqual([columns, 'hidden', bg])
+    expect([pictureBox?.props.width, pictureBox?.props.overflow, pictureBox?.props.backgroundColor]).toEqual([columns, 'hidden', SKIN_BG])
     await ui.unmount()
   })
 }
@@ -429,13 +429,11 @@ test('the skin runs across the whole region: rows as wide as it, the frame in th
     m.shift = shift
     redraw(m, columns)
     const [w, h] = fit(columns)
-    // On the desktop (a shift) the rows overshoot the region by OVERFILL cells each side, which its box clips.
-    const over = overfill(shift, 0)
-    expect(over).toBe(shift > 0 ? OVERFILL : 0)
-    const left = leftOf(columns, w, shift) + over
+    const left = leftOf(columns, w, shift)
     expect([m.top.length, m.rows.length, m.bottom.length]).toEqual([pads(h)[0], h, pads(h)[1]])
     for (const line of text([...m.top, ...m.rows, ...m.bottom])) {
-      expect([...line].length).toBe(columns + 2 * over)
+      // Never wider than the region: the desktop wraps an overlong row instead of clipping it.
+      expect([...line].length).toBe(columns)
       expect(NARROW.test(line)).toBe(true)
     }
     // Beside the frame there is skin, not a black strip: the cells right next to it are shaded (not blank).
@@ -444,13 +442,11 @@ test('the skin runs across the whole region: rows as wide as it, the frame in th
       expect(line.slice(left + w, left + w + 2).includes(BLANK)).toBe(false)
     }
     // One picture: the frame's cells are the same as drawing the frame alone, whatever lies beside it.
-    const whole = text(eyeCells(w, h, { ox: 0, oy: 0, open: 1 }, -pads(h)[0], h + pads(h)[1], -left, columns + 2 * over - left).map(merge))
+    const whole = text(eyeCells(w, h, { ox: 0, oy: 0, open: 1 }, -pads(h)[0], h + pads(h)[1], -left, columns - left).map(merge))
     expect(text([...m.top, ...m.rows, ...m.bottom])).toEqual(whole)
     const alone = text(frame(m, w, h))
     expect(text(m.rows).map(r => r.slice(left, left + w))).toEqual(alone)
   }
-  // With /horus-fit set there is no overshoot (a wide font would wrap), and the rows stop at the usable width.
-  expect([overfill(2, 0.2), overfill(0, 0), overfill(2, 0)]).toEqual([0, 0, OVERFILL])
   expect([PAD_TOP, PAD_BOTTOM, pads(H)]).toEqual([1, 0, [1, 0]])
 })
 

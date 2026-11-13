@@ -91,6 +91,8 @@ const AMBER_DARK = mix(warn, purpleDim, 0.45)
 const CARUNCLE = mix(err, violet, 0.4)
 // Skin, shadow to highlight: the theme's purples, warming where the light falls.
 const SKIN = [mix(purpleDim, purple, 0.55), purple, mix(purple, violet, 0.55), violet, mix(violet, goldBright, 0.4)]
+/** Behind the picture: a very dark skin tone, so the strip a desktop row leaves short of its box (a cell is wider than a glyph) reads as picture, not black. */
+export const SKIN_BG = mix(bg, purple, 0.14)
 const KOHL = purpleDim
 const BROW = mix(purpleDim, purple, 0.5)
 
@@ -403,14 +405,6 @@ export const leftOf = (full: number, w: number, shift = 0) => clamp(Math.floor((
 /** The region's columns the picture may use: all of them less the `/horus-fit` share (so a wide font's rows do not wrap), and w + MARGIN before the first layout. */
 export const usable = (columns: number, w: number, slack = 0) => (columns > 0 ? Math.floor(columns * (1 - clamp(slack, 0, MAX_SLACK))) : w + MARGIN)
 
-/**
- * Cells of skin drawn past each side of the region on the desktop, where a laid-out cell is wider than a glyph and a row
- * of `columns` glyphs falls short of its box: the box clips what overshoots (equally either side, rows being centred),
- * so no black strip is left. Not on the terminal (no shift), and not with `/horus-fit` set (a wide font would wrap).
- */
-export const OVERFILL = 8
-export const overfill = (shift = 0, slack = 0) => (shift > 0 && slack <= 0 ? OVERFILL : 0)
-
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number): boolean {
   const [w, h] = fit(columns, m.slack)
@@ -419,12 +413,12 @@ export function redraw(m: EyeState, columns: number): boolean {
   // The skin runs across the whole region, not just the frame: the frame sits `left` cells in (half the free width plus
   // the desktop's shift), and the cells beside it are the same picture, so no black edge is left.
   const full = usable(columns, w, m.slack)
-  const over = overfill(m.shift, m.slack)
   const left = leftOf(full, w, m.shift)
   // The picture depends on the size, the region, the shift and the pose alone, so a settled eye is not shaded again.
-  const key = `${w}x${h}:${full}:${left}:${over}:${m.ox.toFixed(2)},${m.oy.toFixed(2)},${open}`
+  const key = `${w}x${h}:${full}:${left}:${m.ox.toFixed(2)},${m.oy.toFixed(2)},${open}`
   if (key === m.key) return false
-  const all = eyeCells(w, h, { ox: m.ox, oy: m.oy, open }, -padTop, h + padBottom, -left - over, full - left + over).map(merge)
+  // Rows are never wider than the region: the desktop wraps an overlong row instead of clipping it (it ignores truncate-end).
+  const all = eyeCells(w, h, { ox: m.ox, oy: m.oy, open }, -padTop, h + padBottom, -left, full - left).map(merge)
   m.top = all.slice(0, padTop)
   m.rows = all.slice(padTop, padTop + h)
   m.bottom = all.slice(padTop + h)
@@ -459,7 +453,7 @@ export function shiftRows(rows: Seg[][], n: number): Seg[][] {
 export function draw(elements: ClientSurface['elements'], rows: Seg[][], w: number) {
   const { Box, Text } = elements
   return (
-    <Box flexDirection="column" alignItems="center" width={w} overflow="hidden" backgroundColor={bg}>
+    <Box flexDirection="column" alignItems="center" width={w} overflow="hidden" backgroundColor={SKIN_BG}>
       {rows.map(row => (
         <Text mono wrap="truncate-end">
           {row.map(([s, c]) => (

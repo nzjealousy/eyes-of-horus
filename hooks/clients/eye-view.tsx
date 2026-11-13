@@ -400,6 +400,17 @@ export function pointIn(m: EyeState, x: number, y: number, columns: number) {
 /** The cells to the frame's left in a region `full` columns wide: half the free width plus the desktop's shift, kept inside the region. */
 export const leftOf = (full: number, w: number, shift = 0) => clamp(Math.floor((full - w) / 2) + shift, 0, Math.max(0, full - w))
 
+/** The region's columns the picture may use: all of them less the `/horus-fit` share (so a wide font's rows do not wrap), and w + MARGIN before the first layout. */
+export const usable = (columns: number, w: number, slack = 0) => (columns > 0 ? Math.floor(columns * (1 - clamp(slack, 0, MAX_SLACK))) : w + MARGIN)
+
+/**
+ * Cells of skin drawn past each side of the region on the desktop, where a laid-out cell is wider than a glyph and a row
+ * of `columns` glyphs falls short of its box: the box clips what overshoots (equally either side, rows being centred),
+ * so no black strip is left. Not on the terminal (no shift), and not with `/horus-fit` set (a wide font would wrap).
+ */
+export const OVERFILL = 8
+export const overfill = (shift = 0, slack = 0) => (shift > 0 && slack <= 0 ? OVERFILL : 0)
+
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number): boolean {
   const [w, h] = fit(columns, m.slack)
@@ -407,12 +418,13 @@ export function redraw(m: EyeState, columns: number): boolean {
   const open = openness(m)
   // The skin runs across the whole region, not just the frame: the frame sits `left` cells in (half the free width plus
   // the desktop's shift), and the cells beside it are the same picture, so no black edge is left.
-  const full = columns > 0 ? columns : w + MARGIN
+  const full = usable(columns, w, m.slack)
+  const over = overfill(m.shift, m.slack)
   const left = leftOf(full, w, m.shift)
   // The picture depends on the size, the region, the shift and the pose alone, so a settled eye is not shaded again.
-  const key = `${w}x${h}:${full}:${left}:${m.ox.toFixed(2)},${m.oy.toFixed(2)},${open}`
+  const key = `${w}x${h}:${full}:${left}:${over}:${m.ox.toFixed(2)},${m.oy.toFixed(2)},${open}`
   if (key === m.key) return false
-  const all = eyeCells(w, h, { ox: m.ox, oy: m.oy, open }, -padTop, h + padBottom, -left, full - left).map(merge)
+  const all = eyeCells(w, h, { ox: m.ox, oy: m.oy, open }, -padTop, h + padBottom, -left - over, full - left + over).map(merge)
   m.top = all.slice(0, padTop)
   m.rows = all.slice(padTop, padTop + h)
   m.bottom = all.slice(padTop + h)
@@ -482,14 +494,15 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
   m.shift = clamp(Math.round(Number(props?.shift) || 0), 0, 4)
   m.slack = clamp(Number(props?.slack) || 0, 0, MAX_SLACK)
   const [w] = fit(surface.columns, m.slack)
-  const full = surface.columns || w + MARGIN
+  const region = surface.columns || w + MARGIN
+  const full = usable(surface.columns, w, m.slack)
   const { Box, Text } = surface.elements
   const gap = Array.from({ length: GAP_TOP }, (_, i) => <Text key={`gap${i}`} mono>{' '}</Text>)
   // GAP_TOP blank rows, then the picture: rows as wide as the region (the skin runs to its edges, the frame sitting in
   // it where `leftOf` puts it) with `pads(h)` rows of skin above and below the frame. Rows, not padding: the desktop did
   // not honour the Box's paddingTop.
   return (
-    <Box flexDirection="column" alignItems="center" width={full}>
+    <Box flexDirection="column" alignItems="center" width={region}>
       {gap}
       {draw(surface.elements, [...m.top, ...m.rows, ...m.bottom], full)}
     </Box>

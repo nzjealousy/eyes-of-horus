@@ -82,6 +82,8 @@ export type Snapshot = {
   voice: Pick<HorusVoice, 'enabled' | 'speaking'>
   surfaces: readonly string[]
   replyChars: number
+  /** The `/horus-fit` percent (0 when unset). */
+  fitPct?: number
   place?: { id: string; at: number; result: string }
   seen: Readonly<Record<string, Seen>>
   fault?: { line: string; at: number }
@@ -91,6 +93,17 @@ export type Snapshot = {
 // reply back from the transcript, the rest refills as rows are placed and drawn.
 const diag: { place?: Snapshot['place']; seen: Record<string, Seen>; fault?: Snapshot['fault'] } = { seen: {} }
 let lastReply = ''
+
+/**
+ * What the plugin asked the desktop for and computed from it: the region, the frame, the rows around it and the
+ * `/horus-fit` percent. The width the app really lays out is not visible to a hook, so a report shows the plugin's side only.
+ */
+export function sizeLine(fitPct = 0, columns = EYE_W + MARGIN + 2): string {
+  const region = eyeWidth(columns)
+  const [w, h] = fit(region, fitPct / 100)
+  const [padTop, padBottom] = pads(h)
+  return `Eye size asked: region ${region} columns, frame ${w}x${h} (+${padTop}/${padBottom} skin rows, ${GAP_TOP} gap rows), /horus-fit ${fitPct}%. The app's real width is not visible here: if rows wrap, try /horus-fit 20.`
+}
 
 /** What `/horus-eye` answers. */
 export function diagnose(s: Snapshot): string {
@@ -104,6 +117,7 @@ export function diagnose(s: Snapshot): string {
     `Surfaces: ${s.surfaces.join(', ') || 'none attached'}.`,
     `Terminal: the current row is ${rowId(s.phase, s.turnSeq)}; last $.ui.place: ${s.place ? `${s.place.id} ${s.place.result}, ${ago(s.place.at)}` : 'none since load'}.`,
     `Desktop: drawn under the latest reply (the app draws no placed rows); reply known: ${s.replyChars > 0 ? `${s.replyChars} chars` : 'not yet'}.`,
+    sizeLine(s.fitPct),
     draws.length > 0 ? `Asked to draw:\n${draws.join('\n')}` : 'Asked to draw: nothing since load.',
     ...(s.fault ? [`Last Client fault: ${s.fault.line}, ${ago(s.fault.at)}`] : []),
   ].join('\n')
@@ -235,6 +249,7 @@ export const registerEye = (on: On) => {
       voice: v,
       surfaces: await $.session.surfaces().catch(() => []),
       replyChars: lastReply.length,
+      fitPct: await read($, fitSlack),
       place: diag.place,
       seen: diag.seen,
       fault: diag.fault,

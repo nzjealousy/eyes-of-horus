@@ -5,7 +5,7 @@ import {
   advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAP_TOP, GAZES, gazeToward, H, init, lids, look, MARGIN, leftOf, merge, MAX_SLACK, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, pads, point, shiftRows,
   pointIn, RAMP, redraw, RELEASE_MS, type Seg, shade, SKIN_BG, STRETCH_X, usable, W,
 } from '../hooks/clients/eye-view'
-import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
+import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, sizeLine, speakable } from '../hooks/eye'
 import { dim, gold, goldBright, text as white } from '../hooks/theme'
 
 const rnd = () => 0.5
@@ -303,12 +303,35 @@ test('/horus-eye explains what shows and why', () => {
       'Surfaces: desktop.',
       'Terminal: the current row is eye-4-end; last $.ui.place: eye-4-end placed (r9), 3.0s ago.',
       'Desktop: drawn under the latest reply (the app draws no placed rows); reply known: not yet.',
+      sizeLine(),
       'Asked to draw:\n  terminal placed row: eye-4-end -> none, 0.5s ago',
     ].join('\n'),
   )
   const fault = { line: 'desktop AssistantMessage eye (hooks/clients/eye-view.tsx) render: boom', at: 9_000 }
   const faulted = diagnose({ now: 10_000, phase: 'idle', turnSeq: 4, tail: 0, voice: { enabled: false, speaking: false }, surfaces: [], replyChars: 0, seen: {}, fault })
   expect(faulted.endsWith(`Last Client fault: ${fault.line}, 1.0s ago`)).toBe(true)
+})
+
+test('/horus-eye says what size the plugin asked for, with the /horus-fit percent', () => {
+  // At the desktop's default 84-column region and no fit: the full frame, one skin row above, none below, two gap rows.
+  expect(sizeLine()).toContain('region 84 columns, frame 82x32 (+1/0 skin rows, 2 gap rows), /horus-fit 0%')
+  // With 20% held back the frame is narrower and says so; the same text names the way out for wrapping rows.
+  expect(sizeLine(20)).toContain('frame 65x25 (+1/0 skin rows, 2 gap rows), /horus-fit 20%')
+  expect(sizeLine(20)).toContain('try /horus-fit 20')
+  expect(diagnose({ now: 1, phase: 'idle', turnSeq: 0, tail: 0, voice: { enabled: false, speaking: false }, surfaces: [], replyChars: 0, seen: {}, fitPct: 20 })).toContain('/horus-fit 20%')
+})
+
+// The eye's drawing is pinned by a checksum of every cell and colour (the whole block, skin rows included), open and shut:
+// a change to how the eye looks fails this until the pins are moved ON PURPOSE. When you change the eye, also bump
+// `version` in .claude-plugin/plugin.json and tag the release (see the vault rule for this project).
+const checksum = (rows: Seg[][]) => {
+  let h = 0x811c9dc5
+  for (const ch of rows.map(r => r.map(([s, c]) => s + c).join('')).join('\n')) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0
+  return h.toString(16).padStart(8, '0')
+}
+test('golden frame: the eye looks the same unless someone changes it on purpose', () => {
+  const block = (open: number) => eyeCells(W, H, { ox: 0, oy: 0, open }, -pads(H)[0], H + pads(H)[1]).map(merge)
+  expect([checksum(block(1)), checksum(block(0))]).toEqual(['7ae460d9', '13cba8c5'])
 })
 
 // Answers state reads for the render hook; the rest falls through to the kit.

@@ -109,7 +109,7 @@ Installed through `horus-kit`? The same two commands update the mod. In the desk
 | Command | What it does |
 | --- | --- |
 | `/voiceover [on\|off\|test]` | Voice-over on or off, or speak one test line. |
-| `/horus-eye` | Says what the eye is doing and the last drawing fault, if any. |
+| `/horus-eye` | Says what the eye is doing, the size the plugin asked for (region, frame, `/horus-fit` percent) and the last drawing fault, if any. Paste it into a bug report. |
 | `/horus-doctor` | One line per part: surfaces, panes, the ponytail flag, motion, stored counts, and whether a plugin can call TaskStop (a harmless probe). |
 | `/temple` | Opens the Temple pane. |
 | `/horus-motion [on\|off]` | The mod's animations on or off; no argument toggles. On by default. |

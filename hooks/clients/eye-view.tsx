@@ -87,6 +87,7 @@ export const mix = (a: string, b: string, f: number) => {
 // The iris gradient, pupil edge to rim: gold core to amber.
 const IRIS = [goldBright, gold, mix(gold, warn, 0.5), warn]
 const AMBER_DARK = mix(warn, purpleDim, 0.45)
+const CARUNCLE = mix(warn, violet, 0.5)
 
 /** Consecutive cells of one colour as one run; a blank joins whatever run it follows. */
 export function merge(cells: Seg[]): Seg[] {
@@ -161,14 +162,19 @@ const A = 15 // the almond's half-width
 // The Wedjat's extent in eye units: brow top to the spiral's foot, the inner corner to the cosmetic tail's end
 // (asymmetric, so its middle sits right of the pupil), and that middle.
 const EXT_W = 41
-const EXT_H = 32
+const EXT_H = 36.6
 const MID_X = 4.25
-const MID_Y = 3
+const MID_Y = 1.05
+/** The brow's height over the middle (room for lashes, crease and lid shading below it), the lashes' spacing, and the pupil's and iris's radii (all in eye units). */
+const BROW_Y = -15.5
+const LASH_GAP = 1.8
+const PUPIL_R = 2.2
+const IRIS_R = 5.5
 /** How much of the frame the eye fills, on its tighter axis. */
 const FILL = 0.94
 
 /** How much wider than its natural shape the eye is drawn (x only), for more glyph detail across: the iris, pupil and highlight are kept round. */
-export const STRETCH_X = 1.5
+export const STRETCH_X = 1.35
 
 /** Eye units of a cell centre: x in columns (STRETCH_X columns to a unit's width), y in half-rows (a cell is about twice as tall as wide), scaled so the eye fills FILL of the frame. */
 function units(x: number, y: number, w: number, h: number): [number, number] {
@@ -177,7 +183,8 @@ function units(x: number, y: number, w: number, h: number): [number, number] {
 }
 /** Upper and lower lid heights at `px`: open, they part; at 0 they meet in one line just below the middle. */
 export function lids(px: number, open: number): [number, number] {
-  const f = Math.max(0, 1 - (px / A) ** 2)
+  // An exponent under 1 rounds the corners and fills the lid out, leaving the middle height as it was.
+  const f = Math.max(0, 1 - (px / A) ** 2) ** 0.75
   return [f * (1.5 - 9.5 * open), f * (1.5 + 4.5 * open)]
 }
 
@@ -213,19 +220,34 @@ export function distTo(line: readonly Pt[], px: number, py: number): number {
 export function eyeCell(px: number, py: number, p: Pose): [number, string] {
   const [yU, yL] = lids(px, p.open)
   const isInside = Math.abs(px) < A && py > yU && py < yL
-  // The kohl line on the upper lid, its tail past the outer corner, the lower lid and the brow.
-  if (Math.abs(px) < A + 0.5 && Math.abs(py - yU) < 1.3) return [0.68 - 0.12 * Math.abs(py - yU), violet]
-  // The cosmetic line: straight on from the outer corner, far to the right.
-  if (px >= A && px < A + 9.5 && Math.abs(py - (0.4 + 0.06 * (px - A))) < 1.1) return [0.62 - 0.02 * (px - A), violet]
-  if (Math.abs(px) < A && Math.abs(py - yL) < 0.8) return [0.4, purple]
-  // The brow: a thick arc over the eye, thinning as it runs on past the outer corner.
-  const yB = -12 + 2 * (px / A) ** 2
-  if (px > -A - 0.5 && px < A + 8.5 && Math.abs(py - yB) < 2 - 0.025 * (px + A)) return [0.66 - 0.12 * Math.abs(py - yB), violet]
+  // The kohl: a heavy, dense line on the upper lid, its bold winged tail past the outer corner (thick at the corner,
+  // thinning to its tip), and the lower lid lined too.
+  if (Math.abs(px) < A + 0.5 && Math.abs(py - yU) < 1.7) return [0.85 - 0.1 * Math.abs(py - yU), violet]
+  if (px >= A && px < A + 9.5 && Math.abs(py - (0.4 + 0.06 * (px - A))) < 1.7 - 0.08 * (px - A)) return [0.8 - 0.02 * (px - A), violet]
+  if (Math.abs(px) < A && Math.abs(py - yL) < 1.2) return [0.7, purple]
+  // The brow: a thick feathered arc over the eye, thinning as it runs on past the outer corner.
+  const yB = BROW_Y + 0.8 * (px / A) ** 2
+  const feather = 0.8 + 0.3 * Math.sin(px * 2.3)
+  if (px > -A - 0.5 && px < A + 8.5 && Math.abs(py - yB) < (2 - 0.025 * (px + A)) * feather) return [0.66 - 0.12 * Math.abs(py - yB) + 0.06 * Math.sin(px * 2.3), violet]
+  // Short lashes up from the open upper lid, a little longer and leaning out toward the outer corner.
+  if (p.open > 0.3 && px > -A + 3 && px < A - 1) {
+    const ph = (px + A) / LASH_GAP
+    const len = (2.4 + 2.2 * ((px + A) / (2 * A))) * p.open
+    const lean = 0.2 * (yU - py)
+    const along = ph - Math.floor(ph) + lean / LASH_GAP
+    if (Math.abs(along - 0.5) < 0.17 && py < yU - 1.5 && py > yU - 1.5 - len) return [0.55, violet]
+  }
+  // The eyelid: a crease above the lashes that stays when the lid shuts, and soft skin shading between it and the lid.
+  if (px > -A + 1 && px < A - 1) {
+    const yC = lids(px, 1)[0] * 1.55
+    if (Math.abs(py - yC) < 0.7) return [0.4, purple]
+    if (py > yC && py < yU) return [0.13 + 0.09 * ((py - yC) / (yU - yC || 1)), purple]
+  }
   if (py > 5) {
     const tear = distTo(TEAR, px, py)
-    if (tear < 1.1) return [0.64 - 0.15 * tear, violet]
+    if (tear < 1) return [0.66 - 0.12 * tear, violet]
     const curl = distTo(SPIRAL, px, py)
-    if (curl < 1.1) return [0.64 - 0.15 * curl, violet]
+    if (curl < 0.95) return [0.66 - 0.12 * curl, violet]
   }
   if (!isInside) {
     // Inside the eye's outline but not the opening: lid skin, sparse purple, darkest at the outline.
@@ -236,18 +258,26 @@ export function eyeCell(px: number, py: number, p: Pose): [number, string] {
   }
   // The iris and pupil are round on screen: an x distance is scaled back by the stretch.
   const dx = (px - p.ox) * STRETCH_X
-  const r = Math.hypot(dx, py - p.oy)
-  if (Math.hypot(dx + 1.8, py - p.oy + 1.6) < 1.3) return [1, text]
-  if (r < 2.4) return [0, purpleDim]
-  if (r < 6.2) {
-    const q = (r - 2.4) / 3.8
-    const fibre = 0.07 * Math.sin(Math.atan2(py - p.oy, dx) * 9)
-    const lum = 0.95 - 0.35 * q + fibre - (q > 0.85 ? 0.22 : 0)
-    return [lum, q > 0.85 ? AMBER_DARK : (IRIS[Math.floor(q * IRIS.length)] ?? warn)]
+  const dy = py - p.oy
+  const r = Math.hypot(dx, dy)
+  // Two highlights: a big one up and left, a small one opposite.
+  if (Math.hypot(dx + 2, dy + 1.8) < 1.3) return [1, text]
+  if (Math.hypot(dx - 2.2, dy - 2.4) < 0.7) return [0.85, text]
+  if (r < PUPIL_R) return [0, purpleDim]
+  if (r < IRIS_R) {
+    const q = (r - PUPIL_R) / (IRIS_R - PUPIL_R)
+    // Radial fibres, two soft rings, and a dark limbal edge.
+    const fibre = 0.12 * Math.sin(Math.atan2(dy, dx) * 14)
+    const ring = 0.1 * Math.cos(q * Math.PI * 4)
+    const lum = 0.95 - 0.3 * q + fibre + ring - (q > 0.82 ? 0.38 : 0)
+    return [lum, q > 0.82 ? AMBER_DARK : (IRIS[Math.floor(q * IRIS.length)] ?? warn)]
   }
-  // Sclera, rounder toward the middle, shaded purple under the upper lid.
+  // The caruncle: a small pink blob in the inner corner.
+  if (Math.hypot((px + A - 1.2) * STRETCH_X, py - 0.8) < 1.6) return [0.5, CARUNCLE]
+  // Sclera: brightest by the iris, darker toward both corners and under the upper lid, shaded purple there.
   const edge = Math.min(py - yU, yL - py)
-  return [0.18 + 0.14 * clamp(edge / 3, 0, 1) + 0.1 * (1 - Math.abs(px) / A), py - yU < 2 ? purple : dim]
+  const base = 0.16 + 0.22 * clamp(edge / 3.5, 0, 1)
+  return [base * (1 - 0.55 * (px / A) ** 2), py - yU < 2.5 ? purple : dim]
 }
 
 /** The eye's cells, `w` x `h`, before sparkles. */

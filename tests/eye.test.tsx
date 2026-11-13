@@ -108,14 +108,14 @@ test('the eye is 82 x 19 before layout and otherwise sized from the region width
     const xs = lit.flatMap(r => r.flatMap((on, x) => (on ? [x] : [])))
     return [Math.max(...xs) - Math.min(...xs) + 1, lit.filter(r => r.includes(true)).length]
   }
-  expect(extent(W, H)).toEqual([73, 18]) // the Wedjat's tail, tear and spiral take room in the 19 rows; STRETCH_X makes it 73 of the 82 columns
+  expect(extent(W, H)).toEqual([58, 17]) // the Wedjat's tail, tear and spiral take room in the 19 rows; STRETCH_X makes it 58 of the 82 columns
   // The frame's shape keeps the eye inside it at every width: its lit extent never exceeds the frame.
   for (const columns of [30, 60, 84]) {
     const [w, h] = fit(columns)
     const [ew, eh] = extent(w, h)
     expect(ew <= w && eh <= h).toBe(true)
   }
-  expect(extent(75, 7)).toEqual([26, 7]) // the old bug: fitting to an echoed 7 rows drew a tiny eye
+  expect(extent(75, 7)).toEqual([21, 7]) // the old bug: fitting to an echoed 7 rows drew a tiny eye
   for (const [w, h] of [[82, 16], [40, 13], [24, 9], [60, 17]] as const) {
     const rows = text(frame(init('idle', rnd), w, h))
     expect(rows.length).toBe(h)
@@ -132,9 +132,26 @@ test('the eye is drawn STRETCH_X wider, but its iris stays round on screen', () 
   const pose = { ox: 0, oy: 0, open: 1, t: 0 }
   // 4 screen units across the iris is inside it, 7 is the sclera; both across (x, scaled by the stretch) and down (y).
   expect([eyeCell(4 / STRETCH_X, 0, pose)[0] > 0.55, eyeCell(7 / STRETCH_X, 0, pose)[0] < 0.45]).toEqual([true, true])
-  expect([eyeCell(0, 4, pose)[0] > 0.55, eyeCell(0, 7, pose)[0] < 0.45]).toEqual([true, true])
+  // (Down, past the iris the kohl lines cover the lids, so only the inside is checked there.)
+  expect(eyeCell(0, 4, pose)[0] > 0.55).toBe(true)
   // The iris travels with the gaze in eye units, so it still sits inside the lids at the largest reach.
   expect(eyeCell(6 + 4 / STRETCH_X, 0, { ...pose, ox: 6 })[0] > 0.55).toBe(true)
+})
+
+test('lashes stand above the open upper lid in a row of strokes and fold away when the eye shuts', () => {
+  const open = { ox: 0, oy: 0, open: 1, t: 0 }
+  // Along a line just above the lid at the middle, the lash strokes alternate with gaps.
+  const [yU] = lids(0, 1)
+  const row = Array.from({ length: 120 }, (_, i) => eyeCell(-10 + i * 0.2, yU - 2.6, open)[0] >= 0.5)
+  const strokes = row.filter((on, i) => on && !row[i - 1]).length
+  expect(strokes >= 4).toBe(true)
+  const gaps = row.filter(on => !on).length
+  expect(gaps > 0).toBe(true)
+  // Shut, there are none.
+  const shut = { ...open, open: 0 }
+  const [yS] = lids(0, 0)
+  // (px up to 8: nearer the corner the kohl line itself rises through this height.)
+  expect(Array.from({ length: 90 }, (_, i) => eyeCell(-10 + i * 0.2, yS - 2.6, shut)[0] >= 0.5).some(Boolean)).toBe(false)
 })
 
 test('the open eye shows a gold iris, a dark pupil and a white highlight; the lids meet when shut', () => {

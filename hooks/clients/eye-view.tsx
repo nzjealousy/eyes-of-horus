@@ -39,9 +39,13 @@ export type EyeState = {
   key: string
 }
 
-/** The frame at most, in cells: the region is MARGIN wider. */
+/** The frame's reference size in cells (the region is MARGIN wider). A wider region grows it, in this shape, up to MAX_W. */
 export const W = 82
 export const H = 16
+export const MAX_W = 2 * W
+export const MIN_H = 6
+/** Share of the region's columns left unused, so a font wider than the app's cell estimate still fits (rows wrapped on one desktop: issue #1). */
+export const SLACK = 0.15
 export const FRAME = 90
 export const RELEASE_MS = 2500
 /** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
@@ -49,6 +53,8 @@ export const MARGIN = 2
 /** Starry black rows above and below the frame, so the eye does not sit tight against the reply or what follows. */
 export const PAD_TOP = 4
 export const PAD_BOTTOM = 1
+/** The starry rows above and below a frame `h` rows tall: PAD_TOP and PAD_BOTTOM at the reference height, in proportion otherwise. */
+export const pads = (h: number): [number, number] => [Math.max(1, Math.round((PAD_TOP * h) / H)), Math.max(1, Math.round((PAD_BOTTOM * h) / H))]
 /** Columns and rows at the frame's edge where no sparkle goes, so a star never touches the region's edge. */
 export const SPARK_INSET: readonly [number, number] = [2, 1]
 const SWEEP_MS = 1500
@@ -364,24 +370,29 @@ export const keyOf = (rows: Seg[][]) => rows.map(r => r.map(s => s.join('')).joi
 const asMode = (v: unknown): EyeMode => (v === 'thinking' || v === 'tool' ? v : 'idle')
 
 /**
- * The frame's size in cells: MARGIN columns inside the laid-out region, at most W (also before the first layout), and
- * always H rows. The desktop lays a Client out as tall as what it draws, not as its `height` (asked for 16, a 7-row
- * frame measured 7), so its rows only echo the frame and fitting to them locked the eye small.
+ * The frame's size in cells, from the laid-out region's width alone: SLACK of the columns and MARGIN more left free,
+ * at most MAX_W (W before the first layout), and rows in the reference shape W:H, at least MIN_H. The desktop lays a
+ * Client out as tall as what it draws, not as its `height` (asked for 16, a 7-row frame measured 7), so its rows only
+ * echo the frame and fitting to them locked the eye small: the height is never read.
  */
-export const fit = (columns: number): [number, number] => [columns > 0 ? clamp(columns - MARGIN, 1, W) : W, H]
+export const fit = (columns: number): [number, number] => {
+  const w = columns > 0 ? clamp(Math.floor(columns * (1 - SLACK)) - MARGIN, 1, MAX_W) : W
+  return [w, Math.max(MIN_H, Math.round((w * H) / W))]
+}
 
 /** The pointer at cell (x, y) of the laid-out region, `columns` wide: the frame sits centred in it, so x is moved onto the frame first. */
 export function pointIn(m: EyeState, x: number, y: number, columns: number) {
   const [w, h] = fit(columns)
-  point(m, x - ((columns || w + MARGIN) - w) / 2 - (m.shift ?? 0), y - PAD_TOP, w, h)
+  point(m, x - ((columns || w + MARGIN) - w) / 2 - (m.shift ?? 0), y - pads(h)[0], w, h)
 }
 
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number): boolean {
   const [w, h] = fit(columns)
   const next = frame(m, w, h)
-  const top = padRows(PAD_TOP, w, m.t, 11)
-  const bottom = padRows(PAD_BOTTOM, w, m.t, 23)
+  const [padTop, padBottom] = pads(h)
+  const top = padRows(padTop, w, m.t, 11)
+  const bottom = padRows(padBottom, w, m.t, 23)
   const key = keyOf([...top, ...next, ...bottom])
   if (key === m.key) return false
   m.rows = next
@@ -453,7 +464,7 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
   m.shift = clamp(Math.round(Number(props?.shift) || 0), 0, 4)
   const [w] = fit(surface.columns)
   const { Box } = surface.elements
-  // The frame centred in its region, the margin split either side, PAD_TOP starry rows above and PAD_BOTTOM below. Rows,
+  // The frame centred in its region, the margin split either side, `pads(h)` starry rows above and below. Rows,
   // not padding: the desktop did not honour the Box's paddingTop. All in one black block, so the stars reach the top.
   return (
     <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN} backgroundColor={bg}>

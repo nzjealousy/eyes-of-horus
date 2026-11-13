@@ -2,8 +2,8 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, PAD_BOTTOM, PAD_TOP, padRows, point, shiftRows,
-  pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SPARK_INSET, sparkleLevel, twinkle, W,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, padRows, pads, point, shiftRows,
+  pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SLACK, SPARK_INSET, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
 import { bg, gold, goldBright, orbCore, text as white } from '../hooks/theme'
@@ -87,26 +87,35 @@ test('runs: one per colour, a blank joins its neighbour', () => {
   expect(rows.reduce((n, r) => n + r.length, 0) < (W * H) / 3).toBe(true)
 })
 
-test('the eye is 82 x 16 by default, fits its region across and is always 16 rows tall', () => {
+test('the eye is 82 x 16 before layout and otherwise sized from the region width alone, in that shape', () => {
   expect(fit(0)).toEqual([W, H])
   expect([W, H]).toEqual([82, 16])
-  expect([fit(200), fit(84)]).toEqual([[82, 16], [82, 16]])
-  // The frame keeps MARGIN columns of its region free and is never wider than it.
-  expect([fit(42), fit(30), fit(10), fit(1)].map(f => f[0])).toEqual([40, 28, 8, 1])
+  // The frame leaves SLACK of the columns and MARGIN more free, grows to MAX_W (2x) and its rows follow in the 82:16 shape.
+  expect([fit(200), fit(84)]).toEqual([[MAX_W, 2 * H], [69, 13]])
+  expect([fit(42), fit(30), fit(10), fit(1)].map(f => f[0])).toEqual([33, 23, 6, 1])
+  for (const columns of [1, 10, 30, 60, 84, 120, 200, 400]) {
+    const [w, h] = fit(columns)
+    expect(w + MARGIN <= Math.max(columns, 3) && w <= MAX_W && h >= MIN_H).toBe(true)
+    if (w >= 2 * MIN_H * 5) expect(Math.abs(h - (w * H) / W) <= 0.5).toBe(true)
+  }
   // The desktop region measured live: 77 x 16 once the frame is 16 rows. Fitting to its echoed 7 rows drew the eye 23 x 7.
   const extent = (w: number, h: number) => {
     const lit = eyeCells(w, h, { ox: 0, oy: 0, open: 1, t: 0 }).map(r => r.map(s => s[0] !== BLANK))
     const xs = lit.flatMap(r => r.flatMap((on, x) => (on ? [x] : [])))
     return [Math.max(...xs) - Math.min(...xs) + 1, lit.filter(r => r.includes(true)).length]
   }
-  expect(extent(...fit(77))).toEqual([41, 15]) // the Wedjat's tail, tear and spiral take room in the 16 rows
+  expect(extent(W, H)).toEqual([41, 15]) // the Wedjat's tail, tear and spiral take room in the 16 rows
+  // Twice the frame draws the eye twice as large, to within a cell.
+  const [bw, bh] = extent(MAX_W, 2 * H)
+  expect([Math.abs(bw - 82) <= 2, Math.abs(bh - 30) <= 2]).toEqual([true, true])
   expect(extent(75, 7)).toEqual([15, 7])
   for (const [w, h] of [[82, 16], [40, 13], [24, 9], [60, 17]] as const) {
     const rows = text(frame(init('idle', rnd), w, h))
     expect(rows.length).toBe(h)
     for (const row of rows) expect([...row].length).toBe(w)
   }
-  expect(eyeWidth(200)).toBe(82 + MARGIN)
+  expect(eyeWidth(200)).toBe(MAX_W + MARGIN)
+  expect(eyeWidth(86)).toBe(84)
   expect(eyeWidth(80)).toBe(78)
   expect(eyeWidth(30)).toBe(28)
   expect(eyeWidth(5)).toBe(16)
@@ -162,13 +171,16 @@ test('the gaze takes nine targets, follows the pointer and lets go 2.5 s after t
 })
 
 test('the pointer gaze is read against the centred frame, not its wider region', () => {
-  // A 200-column region holds an 82-column frame 59 columns in: region column 60 is the frame's left edge.
+  // A 200-column region holds its frame centred: region column `left` is the frame's left edge, `left + w` its right.
   const m = init('idle', rnd)
-  pointIn(m, 60, PAD_TOP + 8, 200)
+  const [w, h] = fit(200)
+  const left = (200 - w) / 2
+  const mid = pads(h)[0] + h / 2
+  pointIn(m, left, mid, 200)
   expect(look(m)).toEqual([-1, 0])
-  pointIn(m, 100, PAD_TOP + 8, 200) // the frame's middle
+  pointIn(m, 100, mid, 200) // the frame's middle
   expect(look(m)).toEqual([0, 0])
-  pointIn(m, 140, PAD_TOP + 8, 200)
+  pointIn(m, left + w, mid, 200)
   expect(look(m)).toEqual([1, 0])
   // Before the first layout (0 columns) the region is the frame plus MARGIN.
   pointIn(m, 1, PAD_TOP + 8, 0)
@@ -295,17 +307,21 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
   expect(eye?.props.props).toEqual({ mode: 'thinking', shift: 0 }) // the terminal's cells are as wide as its glyphs: no shift
-  // 16 eye rows plus PAD_TOP empty rows above and PAD_BOTTOM below.
-  expect([eye?.props.width, eye?.props.height]).toEqual([82 + MARGIN, 16 + PAD_TOP + PAD_BOTTOM])
+  // The region is 84 wide with no viewport; its frame's rows plus the starry rows above and below.
+  const [, fh] = fit(84)
+  const [padT, padB] = pads(fh)
+  expect([eye?.props.width, eye?.props.height]).toEqual([84, fh + padT + padB])
   const box = await ui.find({ type: 'Box' })
   expect([box?.props.width, box?.props.flexDirection, box?.props.justifyContent]).toEqual(['100%', 'row', 'center'])
   await ui.pointer({ type: 'move', x: 81, y: 8, in: 'eye' })
   await ui.advance(400)
   const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
-  expect(rows.length).toBe(16 + PAD_TOP + PAD_BOTTOM)
+  // No layout has been reported to the Client yet (0 columns), so it draws the reference frame, not the 84-column one.
+  const [dw, dh] = fit(0)
+  expect(rows.length).toBe(dh + pads(dh)[0] + pads(dh)[1])
   for (const r of rows) {
     expect(r.props.mono).toBe(true)
-    expect([...r.text].length).toBe(82)
+    expect([...r.text].length).toBe(dw)
   }
   await ui.unmount()
 })
@@ -317,7 +333,7 @@ test('every eye row is one line of exactly the frame width, in single-width glyp
   const m = init('idle', rnd)
   for (const columns of [30, 40, 60, 84]) {
     const [w, h] = fit(columns)
-    expect(w).toBe(columns - MARGIN)
+    expect(w).toBe(Math.floor(columns * (1 - SLACK)) - MARGIN)
     for (let t = 0; t < 4000; t += 300) {
       m.t = t
       for (const [rows, width] of [[text(frame(m, w, h)), w]] as const) {
@@ -333,23 +349,25 @@ test('every eye row is one line of exactly the frame width, in single-width glyp
 })
 
 for (const columns of [30, 40, 60, 84]) {
-  test(`a ${columns}-column region draws rows of ${columns - MARGIN}, centred, each cut rather than wrapped`, async ($, on) => {
+  const [fw, fh] = fit(columns)
+  const [padT, padB] = pads(fh)
+  test(`a ${columns}-column region draws rows of ${fw}, centred, each cut rather than wrapped`, async ($, on) => {
     seed(on, { phase: 'idle', turnSeq: 2, tail: 0, voice: VOICE })
     const ui = await $.ui.mount(row('eye-2-end', 'terminal'))
-    // A short region (the desktop's first layout is 1 row) still gets all 16 rows: the desktop grows to what is drawn.
+    // A short region (the desktop's first layout is 1 row) still gets all its rows: the desktop grows to what is drawn.
     await ui.resize({ columns, rows: 7, in: 'eye' })
     await ui.advance(400)
     const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
-    expect(rows.length).toBe(H + PAD_TOP + PAD_BOTTOM)
-    for (const r of rows) expect([...r.text].length).toBe(columns - MARGIN)
+    expect(rows.length).toBe(fh + padT + padB)
+    for (const r of rows) expect([...r.text].length).toBe(fw)
     const [outer, frameBox] = await ui.findAll({ type: 'Box', in: 'eye' })
-    // Still 16 frame rows: the breathing room is PAD_TOP starry rows above and PAD_BOTTOM below, not padding (the desktop ignored it).
+    // The frame's rows come from the width alone; the breathing room is starry rows above and below, not padding (the desktop ignored it).
     // The outer Box is black too, so the pad rows above and below the eye are not left as the app's own colour.
     expect([outer?.props.width, outer?.props.alignItems, outer?.props.backgroundColor]).toEqual([columns, 'center', bg])
     const blank = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap !== 'truncate-end' && t.text === ' ')
     expect(blank.length).toBe(0) // the pad rows are drawn like the frame's, as rows of runs
     // The rows are centred inside the frame too, so glyphs narrower than a laid-out cell (desktop) stay in the middle.
-    expect([frameBox?.props.width, frameBox?.props.overflow, frameBox?.props.alignItems]).toEqual([columns - MARGIN, 'hidden', 'center'])
+    expect([frameBox?.props.width, frameBox?.props.overflow, frameBox?.props.alignItems]).toEqual([fw, 'hidden', 'center'])
     await ui.unmount()
   })
 }
@@ -380,14 +398,14 @@ test('the frame sits in the middle of its region: equal margins either side, one
     const left = Math.floor((columns - w) / 2)
     const right = columns - w - left
     expect(left >= 1 && right >= 1).toBe(true)
-    // Up to the full frame the margin is exactly MARGIN, split evenly; past it, an odd slack leaves one cell over.
-    if (columns <= W + MARGIN) expect([left, right]).toEqual([MARGIN / 2, MARGIN / 2])
-    else expect(right - left <= 1).toBe(true)
+    // An odd slack leaves one cell over.
+    expect(right - left <= 1).toBe(true)
   }
   // The pointer at the region's middle, below the top padding, is the frame's middle: the gaze stays put.
   for (const columns of [40, 41, 84, 85]) {
     const m = init('idle', rnd)
-    pointIn(m, columns / 2 - 0.5, PAD_TOP + H / 2 - 0.5, columns)
+    const [, h] = fit(columns)
+    pointIn(m, columns / 2 - 0.5, pads(h)[0] + h / 2 - 0.5, columns)
     expect(look(m)).toEqual([0, 0])
   }
 })
@@ -523,9 +541,9 @@ test('shiftRows moves every row right by n cells and keeps its width; the pointe
   for (const r of out) expect(r.map(([t]) => [...t].length).reduce((a, b) => a + b, 0)).toBe(5)
   const m = init('idle', rnd)
   m.shift = 2
-  pointIn(m, 40 + 2, PAD_TOP + H / 2 - 0.5, 80)
-  const [w] = fit(80)
+  const [w, h] = fit(80)
+  pointIn(m, 40 + 2, pads(h)[0] + h / 2 - 0.5, 80)
   const centred = init('idle', rnd)
-  pointIn(centred, 40 - ((80 - w) / 2 - 1) + (80 - w) / 2 - 1, PAD_TOP + H / 2 - 0.5, 80)
+  pointIn(centred, 40 - ((80 - w) / 2 - 1) + (80 - w) / 2 - 1, pads(h)[0] + h / 2 - 0.5, 80)
   expect(look(m)).toEqual(look(centred))
 })

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ClientProps, ElementConstructor, EngineInterface, On } from 'claude-code'
 
 import type { HorusPhase, HorusVoice } from '../types'
-import { H as EYE_H, MARGIN, PAD_BOTTOM, PAD_TOP, W as EYE_W } from './clients/eye-view'
+import { fit, MARGIN, MAX_W, pads, W as EYE_W } from './clients/eye-view'
 import * as core from './core'
 
 type $ = EngineInterface
@@ -162,8 +162,8 @@ async function place($: $, id: string) {
 const lastAssistantText = async ($: $) =>
   (await $.session.messages().catch(() => [])).findLast(m => m.role === 'assistant' && m.text.trim() !== '')?.text ?? ''
 
-/** The eye's region width: its full frame and the frame's margin, narrower on a narrow surface. */
-export const eyeWidth = (columns = 80) => Math.max(16, Math.min(EYE_W + MARGIN, columns - 2))
+/** The eye's region width: the largest frame and its margin, narrower on a narrow surface (the frame inside follows it). */
+export const eyeWidth = (columns = 80) => Math.max(16, Math.min(MAX_W + MARGIN, columns - 2))
 
 /** Cells the desktop eye moves right of centre (about 14 px at its cell width). */
 const DESKTOP_SHIFT = 2
@@ -171,14 +171,19 @@ const DESKTOP_SHIFT = 2
 // The eye, sized explicitly so a surface never lays the region out at zero.
 // An unknown viewport gets the full size; the Client still clamps its width to the region it is laid out in.
 // `shift`: cells to move the drawing right (the desktop's cell is wider than its glyph, which left the eye left of centre).
+// shortcut: with no viewport (the desktop) the region is asked at the reference width, not MAX_W, since the app does not
+// say how wide its pane is; raise this default to grow the desktop eye once a wider ask is known to be clamped.
 function view(Client: ElementConstructor<ClientProps>, p: HorusPhase, columns = EYE_W + MARGIN + 2, shift = 0) {
+  const width = eyeWidth(columns)
+  const [, rows] = fit(width)
+  const [padTop, padBottom] = pads(rows)
   return (
     <Client
       key="eye"
       module="./clients/eye-view.tsx"
       props={{ mode: p === 'outputting' ? 'idle' : p, shift }}
-      width={eyeWidth(columns)}
-      height={EYE_H + PAD_TOP + PAD_BOTTOM}
+      width={width}
+      height={rows + padTop + padBottom}
     />
   )
 }

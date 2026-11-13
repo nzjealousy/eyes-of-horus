@@ -8,7 +8,7 @@ import { agentFeed } from '../hooks/hall.ts'
 import { agentSvg, buildCards, CARD_H, GLYPH, HEAD_H, headerSvg, KIND, ROW_H, rowSvg, SLAVE_COLOR, STATUS_COLOR, tierColorOf, tierOf, shortType, trunc, xml } from '../hooks/pane.tsx'
 import { hallSvg, roomSvg, TEMPLE_HEAD_H, templeHeadSvg } from '../hooks/temple.tsx'
 import { fmtElapsed } from '../hooks/clients/agent-clock.tsx'
-import { advance, frame, H as EYE_H, init, MARGIN, PAD_Y, W as EYE_W } from '../hooks/clients/eye-view.tsx'
+import { advance, frame, H as EYE_H, init, MARGIN, PAD_BOTTOM, PAD_TOP, W as EYE_W } from '../hooks/clients/eye-view.tsx'
 import * as T from '../hooks/theme.ts'
 
 const OUT = new URL('./img/', import.meta.url)
@@ -215,7 +215,7 @@ const TRADES = [['general-purpose', 'hammer'], ['Explore', 'torch'], ['Plan', 's
   const LH = 13
   const PADX = MARGIN / 2 + 3
   const W = Math.round((EYE_W + 2 * PADX) * CW)
-  const H = (EYE_H + 2 * (PAD_Y + 1)) * LH
+  const H = (EYE_H + PAD_TOP + PAD_BOTTOM + 2) * LH
   const m = init('idle', () => 0.5)
   m.nextSaccade = m.nextBlink = m.nextSweep = Infinity
   const settle = (gx, gy) => {
@@ -252,7 +252,7 @@ const TRADES = [['general-purpose', 'hammer'], ['Explore', 'torch'], ['Plan', 's
       return `.f${i}{opacity:0;animation:eye${i} ${total.toFixed(2)}s step-end infinite}@keyframes eye${i}{0%{opacity:0}${stops}}`
     })
     .join('')
-  const y0 = (PAD_Y + 1) * LH
+  const y0 = (PAD_TOP + 1) * LH
   const body = frames.map((rows, i) => {
     const lines = rows.map((row, r) => {
       const spans = row.map(([t, c]) => `<tspan fill="${c}">${xml(t)}</tspan>`).join('')

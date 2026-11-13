@@ -318,6 +318,18 @@ test('desktop: header tiles, grid, one Svg per card, groups and a planned card; 
   await term.unmount()
 })
 
+// On desktop a Hall Button holds only its mark (the native control ignores Text colour), the coloured Text beside it;
+// these read the pair back as the one line the terminal draws.
+type Finder = { find: (q: Record<string, unknown>) => Promise<{ text?: string } | undefined> }
+const headOf = async (ui: Finder, surface: string, n: number) =>
+  surface === 'desktop'
+    ? `${(await ui.find({ key: `turn:${n}` }))?.text}${(await ui.find({ type: 'Text', text: new RegExp(`^ turn ${n} ·`) }))?.text}`
+    : (await ui.find({ key: `turn:${n}` }))?.text
+const titleOf = async (ui: Finder, surface: string) =>
+  surface === 'desktop'
+    ? `${(await ui.find({ key: 'session-toggle' }))?.text}${(await ui.find({ type: 'Text', text: / The Hall of Truth:$/ }))?.text}`
+    : (await ui.find({ key: 'session-toggle' }))?.text
+
 test('The Hall of Truth and Gods fold and unfold', async ($, on) => {
   seed(on, SEEDED)
   // Each step mounts afresh, so the check reads what the press wrote without leaning on redraw timing.
@@ -329,12 +341,12 @@ test('The Hall of Truth and Gods fold and unfold', async ($, on) => {
       return $.ui.mount({ ...PANE, surface })
     }
     let ui = await $.ui.mount({ ...PANE, surface })
-    expect((await ui.find({ key: 'session-toggle' }))?.text).toBe('▾ The Hall of Truth:')
+    expect(await titleOf(ui, surface)).toBe('▾ The Hall of Truth:')
     expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Collapse')
     await ui.unmount()
 
     ui = await press('session-toggle')
-    expect((await ui.find({ key: 'session-toggle' }))?.text).toBe('▸ The Hall of Truth:')
+    expect(await titleOf(ui, surface)).toBe('▸ The Hall of Truth:')
     expect(await ui.find({ type: 'Text', text: /turns 3/ })).toBeDefined() // the one-line stats stay
     expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeUndefined()
     await ui.unmount()
@@ -477,7 +489,7 @@ test('Hall of Truth: turn headers, compact rows, Now line, filter chips and fold
   seed(on, HALL)
   for (const surface of ['terminal', 'desktop'] as const) {
     // Tall enough that both turns, opened, fit the Hall's window.
-    const mount = () => $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 80 } }, surface })
+    const mount = () => $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60, scroll: { offset: 0, bodyRows: 80 } }, surface })
     const press = async (key: string) => {
       const ui = await mount()
       await ui.press({ key })
@@ -486,8 +498,8 @@ test('Hall of Truth: turn headers, compact rows, Now line, filter chips and fold
     }
     let ui = await mount()
     // Turn 1 folded (older), turn 2 open (newest), with its counts and running time (61s..66s).
-    expect((await ui.find({ key: 'turn:1' }))?.text).toBe('▸ turn 1 · 1 tool')
-    expect((await ui.find({ key: 'turn:2' }))?.text).toBe('▾ turn 2 · 2 tools · 1 agent')
+    expect(await headOf(ui, surface, 1)).toBe('▸ turn 1 · 1 tool')
+    expect(await headOf(ui, surface, 2)).toBe('▾ turn 2 · 2 tools · 1 agent')
     expect(await ui.find({ type: 'Text', text: '00:05' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeUndefined()
     // Rows: kind glyph, status glyph, the subagent's tool indented under its tier tag, durations.
@@ -528,7 +540,7 @@ test('Hall of Truth: turn headers, compact rows, Now line, filter chips and fold
 
     // Opening old turn 1 shows its rows; closing it again hides them.
     ui = await press('turn:1')
-    expect((await ui.find({ key: 'turn:1' }))?.text).toBe('▾ turn 1 · 1 tool')
+    expect(await headOf(ui, surface, 1)).toBe('▾ turn 1 · 1 tool')
     expect(await ui.find({ type: 'Text', text: 'make it so' })).toBeDefined()
     await ui.unmount()
     ui = await press('turn:1')
@@ -557,7 +569,7 @@ test('turn headers keep their duration but carry no bar strip, at any width, on 
   for (const surface of SURFACES)
     for (const bodyColumns of [40, 60, 120]) {
       const ui = await $.ui.mount({ ...PANE, props: { ...TALL, bodyColumns }, surface })
-      expect((await ui.find({ key: 'turn:2' }))?.text).toBe('▾ turn 2 · 2 tools · 1 agent')
+      expect(await headOf(ui, surface, 2)).toBe('▾ turn 2 · 2 tools · 1 agent')
       expect(await ui.find({ type: 'Text', text: '00:05' })).toBeDefined() // turn 2's time, 61..66 s
       expect(await ui.find({ type: 'Text', text: /[━─]/ })).toBeUndefined()
       expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).endsWith('timeline'))).toBe(false)
@@ -584,7 +596,7 @@ test('the Hall of Truth draws every process in the log, not a window of it, on b
   seed(on, MANY)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60 }, surface })
-    expect((await ui.find({ key: 'turn:1' }))?.text).toBe('▾ turn 1 · 150 tools')
+    expect(await headOf(ui, surface, 1)).toBe('▾ turn 1 · 150 tools')
     for (let i = 0; i < 150; i++) expect(await ui.find({ type: 'Text', text: `Read · file${i}.ts` })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /older|newer/ })).toBeUndefined()
     await ui.unmount()
@@ -760,8 +772,15 @@ test('an agent row and its tools in the Hall of Truth open that agent in the Tem
     const keys = (await ui.findAll({})).map(x => x.key).filter((k): k is string => k?.startsWith('hall-agent:') === true)
     expect(keys.map(k => k.split(':').slice(2).join(':'))).toEqual(['agent:a1', 'tu1'])
     // The Button holds the row's own label as its child text (no `label` prop), so the row reads as before.
-    expect((await ui.find({ key: keys[0]! }))?.text).toBe('Worker')
-    expect((await ui.find({ key: keys[1]! }))?.text).toBe('Read · a.ts')
+    // Desktop: the Button is a ↗ mark and the label a coloured Text beside it; terminal: the label is the Button's text.
+    if (surface === 'desktop') {
+      expect([(await ui.find({ key: keys[0]! }))?.text, (await ui.find({ key: keys[1]! }))?.text]).toEqual(['↗', '↗'])
+      expect(await ui.find({ type: 'Text', text: 'Worker' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Read · a.ts' })).toBeDefined()
+    } else {
+      expect((await ui.find({ key: keys[0]! }))?.text).toBe('Worker')
+      expect((await ui.find({ key: keys[1]! }))?.text).toBe('Read · a.ts')
+    }
     expect(await ui.find({ type: 'Text', text: 'Grep · main' })).toBeDefined()
     for (const k of keys) await ui.press({ key: k })
     await ui.unmount()

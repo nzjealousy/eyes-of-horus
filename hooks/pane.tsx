@@ -851,16 +851,25 @@ export const registerPane = (on: On) => {
         </Box>
       )
 
+    // The desktop draws a Button as its own native control and ignores the colour of the Text inside it (the Hall read
+    // white). So there a Button carries only a mark or a dim/bright label, and the coloured Text sits beside it.
+    const desk = e.surface === 'desktop'
     const setFilter = (f: typeof filter) => update($, hallFilter, () => f)
     const filters = (
       <Box key="hall-filters" flexDirection="row">
         {HALL_FILTERS.flatMap((f, i) => [
-          ...(i > 0 ? [<Text key={`sep:${f}`} dimColor>{' · '}</Text>] : []),
-          <Button key={`filter:${f}`} plain onPress={() => setFilter(f)}>
-            <Text color={f === filter ? T.gold : T.dim} bold={f === filter}>
+          ...(i > 0 ? [<Text key={`sep:${f}`} mono dimColor>{' · '}</Text>] : []),
+          desk ? (
+            <Button key={`filter:${f}`} plain dimColor={f !== filter} onPress={() => setFilter(f)}>
               {FILTER_LABEL[f]}
-            </Text>
-          </Button>,
+            </Button>
+          ) : (
+            <Button key={`filter:${f}`} plain onPress={() => setFilter(f)}>
+              <Text color={f === filter ? T.gold : T.dim} bold={f === filter}>
+                {FILTER_LABEL[f]}
+              </Text>
+            </Button>
+          ),
         ])}
       </Box>
     )
@@ -868,14 +877,24 @@ export const registerPane = (on: On) => {
     const newest = newestTurn(log)
     const headNode = (hd: HallHead) => {
       const dur = fmtElapsed(hd.ms)
+      const toggle = () => update($, hallOpen, m => toggleTurn(m, hd.turn, newest))
       return (
         <Box key={`head:${hd.turn}`} flexDirection="row" width={W}>
-          <Box flexGrow={1}>
-            <Button key={`turn:${hd.turn}`} plain onPress={() => update($, hallOpen, m => toggleTurn(m, hd.turn, newest))}>
-              <Text color={T.gold}>{trunc(headLabel(hd), W - dur.length - 1)}</Text>
-            </Button>
+          <Box flexGrow={1} flexDirection="row">
+            {desk ? (
+              <Button key={`turn:${hd.turn}`} plain onPress={toggle}>
+                {hd.open ? '▾' : '▸'}
+              </Button>
+            ) : null}
+            {desk ? (
+              <Text mono color={T.gold}>{trunc(headLabel(hd).slice(1), W - dur.length - 3)}</Text>
+            ) : (
+              <Button key={`turn:${hd.turn}`} plain onPress={toggle}>
+                <Text color={T.gold}>{trunc(headLabel(hd), W - dur.length - 1)}</Text>
+              </Button>
+            )}
           </Box>
-          <Text dimColor>{dur}</Text>
+          <Text mono dimColor>{dur}</Text>
         </Box>
       )
     }
@@ -891,20 +910,29 @@ export const registerPane = (on: On) => {
       const room = W - lead.length - 2 - status.length - tagText.length - (r.dur ? r.dur.length + 1 : 0) - (stopId === undefined ? 0 : 6)
       return (
         <Box key={`row:${i}:${x.id}`} flexDirection="row" width={W}>
-          <Text color={color}>{`${lead}${glyph} `}</Text>
-          {x.status === undefined ? null : <Text color={STATUS_COLOR[x.status]}>{status}</Text>}
-          {tagText === '' ? null : <Text color={tagColor(x.agentId!)}>{tagText}</Text>}
-          <Box flexGrow={1}>
+          <Text mono color={color}>{`${lead}${glyph} `}</Text>
+          {x.status === undefined ? null : <Text mono color={STATUS_COLOR[x.status]}>{status}</Text>}
+          {tagText === '' ? null : <Text mono color={tagColor(x.agentId!)}>{tagText}</Text>}
+          <Box flexGrow={1} flexDirection="row">
             {/* An agent's row, or a subagent's tool, opens that agent's chamber, as a card's ↗ does (children, no `label`). */}
             {x.agentId === undefined ? (
-              <Text color={T.text}>{trunc(x.label, room)}</Text>
+              <Text mono color={T.text}>{trunc(x.label, room)}</Text>
+            ) : desk ? (
+              <Text mono color={T.text}>{trunc(x.label, room - 2)}</Text>
             ) : (
               <Button key={`hall-agent:${i}:${x.id}`} plain onPress={open(x.agentId)}>
                 <Text color={T.text}>{trunc(x.label, room)}</Text>
               </Button>
             )}
+            {desk && x.agentId !== undefined ? (
+              <Box marginLeft={1}>
+                <Button key={`hall-agent:${i}:${x.id}`} plain onPress={open(x.agentId)}>
+                  ↗
+                </Button>
+              </Box>
+            ) : null}
           </Box>
-          {r.dur === '' ? null : <Text dimColor>{r.dur}</Text>}
+          {r.dur === '' ? null : <Text mono dimColor>{r.dur}</Text>}
           {stopId === undefined ? null : <Box marginLeft={1}>{stopButton(`agent:${stopId}`, 'Stop', stopAgent(stopId))}</Box>}
         </Box>
       )
@@ -915,21 +943,32 @@ export const registerPane = (on: On) => {
       <Box flexDirection="column" width={W}>
         {top}
         <Text> </Text>
-        <Button key="session-toggle" plain onPress={() => fold('session')}>
-          <Text bold color={T.gold}>
-            {folded.session ? '▸' : '▾'} {HALL_LABEL}
-          </Text>
-        </Button>
-        {nowRow}
-        {folded.session ? null : filters}
-        <Text dimColor>{chips}</Text>
-        {folded.session
-          ? null
-          : log.length === 0
-            ? <Text dimColor>Nothing yet: send a prompt.</Text>
-            : lines.length === 0
-              ? <Text dimColor>Nothing under this filter.</Text>
-              : lines.map((l, i) => (l.kind === 'head' ? headNode(l) : rowNode(l, i)))}
+        <Box flexDirection="column" width={W}>
+          {desk ? (
+            <Box flexDirection="row">
+              <Button key="session-toggle" plain onPress={() => fold('session')}>
+                {folded.session ? '▸' : '▾'}
+              </Button>
+              <Text mono bold color={T.gold}>{` ${HALL_LABEL}`}</Text>
+            </Box>
+          ) : (
+            <Button key="session-toggle" plain onPress={() => fold('session')}>
+              <Text bold color={T.gold}>
+                {folded.session ? '▸' : '▾'} {HALL_LABEL}
+              </Text>
+            </Button>
+          )}
+          {nowRow}
+          {folded.session ? null : filters}
+          <Text mono dimColor>{chips}</Text>
+          {folded.session
+            ? null
+            : log.length === 0
+              ? <Text mono dimColor>Nothing yet: send a prompt.</Text>
+              : lines.length === 0
+                ? <Text mono dimColor>Nothing under this filter.</Text>
+                : lines.map((l, i) => (l.kind === 'head' ? headNode(l) : rowNode(l, i)))}
+        </Box>
       </Box>
     )
   })

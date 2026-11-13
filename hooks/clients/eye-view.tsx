@@ -41,7 +41,8 @@ export const RELEASE_MS = 2500
 /** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
 export const MARGIN = 2
 /** Empty rows above and below the frame, so the eye does not sit tight against the reply or what follows. */
-export const PAD_Y = 1
+export const PAD_TOP = 2
+export const PAD_BOTTOM = 1
 /** Columns and rows at the frame's edge where no sparkle goes, so a star never touches the region's edge. */
 export const SPARK_INSET: readonly [number, number] = [2, 1]
 const SWEEP_MS = 1500
@@ -350,7 +351,7 @@ export const fit = (columns: number): [number, number] => [columns > 0 ? clamp(c
 /** The pointer at cell (x, y) of the laid-out region, `columns` wide: the frame sits centred in it, so x is moved onto the frame first. */
 export function pointIn(m: EyeState, x: number, y: number, columns: number) {
   const [w, h] = fit(columns)
-  point(m, x - ((columns || w + MARGIN) - w) / 2, y - PAD_Y, w, h)
+  point(m, x - ((columns || w + MARGIN) - w) / 2, y - PAD_TOP, w, h)
 }
 
 /** Draws the frame again; true when it changed. */
@@ -405,9 +406,9 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
   m.mode = asMode(props?.mode)
   const [w] = fit(surface.columns)
   const { Box } = surface.elements
-  // The frame centred in its region, the margin split either side, PAD_Y empty rows above and below.
+  // The frame centred in its region, the margin split either side, PAD_TOP empty rows above and PAD_BOTTOM below.
   return (
-    <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN} paddingY={PAD_Y}>
+    <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN} paddingTop={PAD_TOP} paddingBottom={PAD_BOTTOM}>
       {draw(surface.elements, m.rows, w)}
     </Box>
   )

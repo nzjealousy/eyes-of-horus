@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, PAD_Y, point,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, openness, PAD_BOTTOM, PAD_TOP, point,
   pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SPARK_INSET, sparkleLevel, twinkle, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
@@ -164,14 +164,14 @@ test('the gaze takes nine targets, follows the pointer and lets go 2.5 s after t
 test('the pointer gaze is read against the centred frame, not its wider region', () => {
   // A 200-column region holds an 82-column frame 59 columns in: region column 60 is the frame's left edge.
   const m = init('idle', rnd)
-  pointIn(m, 60, 8, 200)
+  pointIn(m, 60, PAD_TOP + 8, 200)
   expect(look(m)).toEqual([-1, 0])
-  pointIn(m, 100, 8, 200) // the frame's middle
+  pointIn(m, 100, PAD_TOP + 8, 200) // the frame's middle
   expect(look(m)).toEqual([0, 0])
-  pointIn(m, 140, 8, 200)
+  pointIn(m, 140, PAD_TOP + 8, 200)
   expect(look(m)).toEqual([1, 0])
   // Before the first layout (0 columns) the region is the frame plus MARGIN.
-  pointIn(m, 1, 8, 0)
+  pointIn(m, 1, PAD_TOP + 8, 0)
   expect(look(m)).toEqual([-1, 0])
 })
 
@@ -295,8 +295,8 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
   expect(eye?.props.props).toEqual({ mode: 'thinking' })
-  // 16 eye rows plus PAD_Y empty rows above and below.
-  expect([eye?.props.width, eye?.props.height]).toEqual([82 + MARGIN, 16 + 2 * PAD_Y])
+  // 16 eye rows plus PAD_TOP empty rows above and PAD_BOTTOM below.
+  expect([eye?.props.width, eye?.props.height]).toEqual([82 + MARGIN, 16 + PAD_TOP + PAD_BOTTOM])
   const box = await ui.find({ type: 'Box' })
   expect([box?.props.width, box?.props.flexDirection, box?.props.justifyContent]).toEqual(['100%', 'row', 'center'])
   await ui.pointer({ type: 'move', x: 81, y: 8, in: 'eye' })
@@ -344,7 +344,7 @@ for (const columns of [30, 40, 60, 84]) {
     for (const r of rows) expect([...r.text].length).toBe(columns - MARGIN)
     const [outer, frameBox] = await ui.findAll({ type: 'Box', in: 'eye' })
     // Still 16 Text rows: the breathing room is the outer Box's padding, not extra rows of the frame.
-    expect([outer?.props.width, outer?.props.alignItems, outer?.props.paddingY]).toEqual([columns, 'center', PAD_Y])
+    expect([outer?.props.width, outer?.props.alignItems, outer?.props.paddingTop, outer?.props.paddingBottom]).toEqual([columns, 'center', PAD_TOP, PAD_BOTTOM])
     // The rows are centred inside the frame too, so glyphs narrower than a laid-out cell (desktop) stay in the middle.
     expect([frameBox?.props.width, frameBox?.props.overflow, frameBox?.props.alignItems]).toEqual([columns - MARGIN, 'hidden', 'center'])
     await ui.unmount()
@@ -364,7 +364,7 @@ test('the frame sits in the middle of its region: equal margins either side, one
   // The pointer at the region's middle, below the top padding, is the frame's middle: the gaze stays put.
   for (const columns of [40, 41, 84, 85]) {
     const m = init('idle', rnd)
-    pointIn(m, columns / 2 - 0.5, PAD_Y + H / 2 - 0.5, columns)
+    pointIn(m, columns / 2 - 0.5, PAD_TOP + H / 2 - 0.5, columns)
     expect(look(m)).toEqual([0, 0])
   }
 })

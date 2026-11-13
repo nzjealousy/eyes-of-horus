@@ -45,7 +45,7 @@ test('speakable caps the text near 900 characters at a sentence end', () => {
   expect(out[0]).toBe('Sentence number 0 is here.')
 })
 
-test('the row keeps the eye up while speaking, hides during output and 8 s after a turn', () => {
+test('the row keeps the eye up while speaking, hides during output and 3 s after a turn', () => {
   const now = 100_000
   expect(show('thinking', 0, now, false)).toBe('eye')
   expect(show('tool', now - 10, now, false)).toBe('eye')
@@ -261,7 +261,7 @@ test('/horus-eye explains what shows and why', () => {
     now: 10_000,
     phase: 'idle',
     turnSeq: 4,
-    tail: 7_000,
+    tail: 9_000,
     voice: { enabled: false, speaking: false },
     surfaces: ['desktop'],
     replyChars: 0,
@@ -270,8 +270,8 @@ test('/horus-eye explains what shows and why', () => {
   })
   expect(out).toBe(
     [
-      'Horus eye: phase idle, turn 4, last reply 3.0s ago.',
-      'Now showing: none (hidden 5.0s more after the reply). Voice-over off.',
+      'Horus eye: phase idle, turn 4, last reply 1.0s ago.',
+      'Now showing: none (hidden 2.0s more after the reply). Voice-over off.',
       'Surfaces: desktop.',
       'Terminal: the current row is eye-4-end; last $.ui.place: eye-4-end placed (r9), 3.0s ago.',
       'Desktop: drawn under the latest reply (the app draws no placed rows); reply known: not yet.',
@@ -545,10 +545,10 @@ test('on the desktop the idle eye sits under the reply once the hide window ends
   await ui.unmount()
 
   const diag = (await $.command.run({ ...RUN, command: 'horus-eye', args: '' })).text
-  expect(diag).toContain('Horus eye: phase idle, turn 0, last reply 8.0s ago.')
+  expect(diag).toContain('Horus eye: phase idle, turn 0, last reply 3.0s ago.')
   expect(diag).toContain('Now showing: eye.')
   expect(diag).toContain('Surfaces: desktop.')
-  expect(diag).toContain('last $.ui.place: eye-0-end placed (r), 8.0s ago')
+  expect(diag).toContain('last $.ui.place: eye-0-end placed (r), 3.0s ago')
   expect(diag).toContain('reply known: 23 chars')
   expect(diag).toContain('desktop reply: m1 -> eye')
 })

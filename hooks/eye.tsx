@@ -16,7 +16,7 @@ const voice = atom({ plugin: 'eyes-of-horus', key: 'voice' } as const, core.voic
 const fitSlack = atom({ plugin: 'eyes-of-horus', key: 'fitSlack' } as const, core.fitSlack.initial)
 
 const PLUGIN = 'eyes-of-horus'
-export const HIDE_MS = 8000
+export const HIDE_MS = 3000
 const CAP = 900
 const MS_PER_CHAR = 60
 const TEST_LINE = 'The eye of Horus is watching.'

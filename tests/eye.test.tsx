@@ -108,14 +108,14 @@ test('the eye is 82 x 32 before layout and otherwise sized from the region width
     const xs = lit.flatMap(r => r.flatMap((on, x) => (on ? [x] : [])))
     return [Math.max(...xs) - Math.min(...xs) + 1, lit.filter(r => r.includes(true)).length]
   }
-  expect(extent(W, H)).toEqual([49, 8]) // the almond between its kohl lines: about 3:1 on screen, a cell being twice as tall as wide
+  expect(extent(W, H)).toEqual([54, 9]) // the almond between its kohl lines: about 3:1 on screen, a cell being twice as tall as wide
   // The frame's shape keeps the eye inside it at every width: its opening never reaches the frame's edge.
   for (const columns of [30, 60, 84]) {
     const [w, h] = fit(columns)
     const [ew, eh] = extent(w, h)
     expect(ew < w && eh < h).toBe(true)
   }
-  expect(extent(75, 7)).toEqual([8, 1]) // the old bug: fitting to an echoed 7 rows drew a tiny eye
+  expect(extent(75, 7)).toEqual([10, 1]) // the old bug: fitting to an echoed 7 rows drew a tiny eye
   for (const [w, h] of [[82, 16], [40, 13], [24, 9], [60, 17]] as const) {
     const rows = text(frame(init('idle', rnd), w, h))
     expect(rows.length).toBe(h)
@@ -435,7 +435,7 @@ test('the rows above and below the frame carry the skin on: every cell shaded, t
     expect(text([...m.top, ...m.rows, ...m.bottom])).toEqual(all)
     expect(text(m.rows)).toEqual(text(frame(m, w, h)))
   }
-  expect([PAD_TOP, PAD_BOTTOM, pads(H)]).toEqual([4, 1, [4, 1]])
+  expect([PAD_TOP, PAD_BOTTOM, pads(H)]).toEqual([1, 0, [1, 0]])
 })
 
 test('the frame sits in the middle of its region: equal margins either side, one cell apart at most', () => {

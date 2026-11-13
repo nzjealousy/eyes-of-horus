@@ -55,10 +55,10 @@ export const RELEASE_MS = 2500
 /** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
 export const MARGIN = 2
 /** Rows of skin above and below the frame: the picture runs on into them (more forehead, a little more cheek). */
-export const PAD_TOP = 4
-export const PAD_BOTTOM = 1
+export const PAD_TOP = 1
+export const PAD_BOTTOM = 0
 /** The rows above and below a frame `h` rows tall: PAD_TOP and PAD_BOTTOM at the reference height, in proportion otherwise. */
-export const pads = (h: number): [number, number] => [Math.max(1, Math.round((PAD_TOP * h) / H)), Math.max(1, Math.round((PAD_BOTTOM * h) / H))]
+export const pads = (h: number): [number, number] => [Math.max(1, Math.round((PAD_TOP * h) / H)), Math.round((PAD_BOTTOM * h) / H)]
 const SWEEP_MS = 1500
 /** Lid openness on each frame of a blink. */
 export const BLINK = [0.55, 0.12, 0, 0.3, 0.7]
@@ -126,7 +126,7 @@ const WING = 10
 const PUPIL_R = 3
 const IRIS_R = 7.2
 /** How much of the frame the Wedjat fills, on its tighter axis, and how strong the skin's grain is. */
-const FILL = 0.87
+const FILL = 0.96
 const GRAIN = 0.07
 
 /** How much wider than its natural shape the eye is drawn (x only), for more glyph detail across: the iris, pupil and highlight are kept round. */

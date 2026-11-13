@@ -57,6 +57,8 @@ export const MARGIN = 2
 /** Rows of skin above and below the frame: the picture runs on into them (more forehead, a little more cheek). */
 export const PAD_TOP = 1
 export const PAD_BOTTOM = 0
+/** Blank rows above the picture, outside it, so the block sits lower under the reply (rows, not padding: the desktop ignored it). */
+export const GAP_TOP = 2
 /** The rows above and below a frame `h` rows tall: PAD_TOP and PAD_BOTTOM at the reference height, in proportion otherwise. */
 export const pads = (h: number): [number, number] => [Math.max(1, Math.round((PAD_TOP * h) / H)), Math.round((PAD_BOTTOM * h) / H)]
 const SWEEP_MS = 1500
@@ -279,15 +281,17 @@ export function eyeCell(px: number, py: number, p: Pose): [number, string] {
 }
 
 /**
- * The picture's cells, `w` wide: rows `y0` up to `y1` of a frame `h` rows tall (rows outside 0..h are the skin above and
- * below the frame). A cell centre in eye units: x in columns (STRETCH_X columns to a unit's width), y in half-rows (a
- * cell is about twice as tall as wide), scaled so the Wedjat fills FILL of the frame.
+ * The picture's cells for a frame `w` x `h`: rows `y0` up to `y1` (rows outside 0..h are the skin above and below the
+ * frame) and columns `x0` up to `x1` (outside 0..w the skin beside it). A cell centre in eye units: x in columns
+ * (STRETCH_X columns to a unit's width), y in half-rows (a cell is about twice as tall as wide), scaled so the Wedjat
+ * fills FILL of the frame.
  */
-export function eyeCells(w: number, h: number, p: Pose, y0 = 0, y1 = h): Seg[][] {
+export function eyeCells(w: number, h: number, p: Pose, y0 = 0, y1 = h, x0 = 0, x1 = w): Seg[][] {
   const k = FILL * Math.min(w / (EXT_W * STRETCH_X), (2 * h) / EXT_H)
   const pose = { ...p, row: 2 / k }
   return Array.from({ length: y1 - y0 }, (_, i) =>
-    Array.from({ length: w }, (_, x): Seg => {
+    Array.from({ length: x1 - x0 }, (_, j): Seg => {
+      const x = x0 + j
       const [lum, c] = eyeCell((x + 0.5 - w / 2) / (k * STRETCH_X) + MID_X, ((y0 + i + 0.5 - h / 2) * 2) / k + MID_Y, pose)
       return [shade(lum), c]
     }),
@@ -390,18 +394,25 @@ export const fit = (columns: number, slack = 0): [number, number] => {
 /** The pointer at cell (x, y) of the laid-out region, `columns` wide: the frame sits centred in it, so x is moved onto the frame first. */
 export function pointIn(m: EyeState, x: number, y: number, columns: number) {
   const [w, h] = fit(columns, m.slack)
-  point(m, x -((columns || w + MARGIN) - w) / 2 - (m.shift ?? 0), y - pads(h)[0], w, h)
+  point(m, x - ((columns || w + MARGIN) - w) / 2 - (m.shift ?? 0), y - GAP_TOP - pads(h)[0], w, h)
 }
+
+/** The cells to the frame's left in a region `full` columns wide: half the free width plus the desktop's shift, kept inside the region. */
+export const leftOf = (full: number, w: number, shift = 0) => clamp(Math.floor((full - w) / 2) + shift, 0, Math.max(0, full - w))
 
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number): boolean {
   const [w, h] = fit(columns, m.slack)
   const [padTop, padBottom] = pads(h)
   const open = openness(m)
-  // The picture depends on the size and the pose alone, so a settled eye is not shaded again.
-  const key = `${w}x${h}:${m.ox.toFixed(2)},${m.oy.toFixed(2)},${open}`
+  // The skin runs across the whole region, not just the frame: the frame sits `left` cells in (half the free width plus
+  // the desktop's shift), and the cells beside it are the same picture, so no black edge is left.
+  const full = columns > 0 ? columns : w + MARGIN
+  const left = leftOf(full, w, m.shift)
+  // The picture depends on the size, the region, the shift and the pose alone, so a settled eye is not shaded again.
+  const key = `${w}x${h}:${full}:${left}:${m.ox.toFixed(2)},${m.oy.toFixed(2)},${open}`
   if (key === m.key) return false
-  const all = eyeCells(w, h, { ox: m.ox, oy: m.oy, open }, -padTop, h + padBottom).map(merge)
+  const all = eyeCells(w, h, { ox: m.ox, oy: m.oy, open }, -padTop, h + padBottom, -left, full - left).map(merge)
   m.top = all.slice(0, padTop)
   m.rows = all.slice(padTop, padTop + h)
   m.bottom = all.slice(padTop + h)
@@ -471,12 +482,16 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
   m.shift = clamp(Math.round(Number(props?.shift) || 0), 0, 4)
   m.slack = clamp(Number(props?.slack) || 0, 0, MAX_SLACK)
   const [w] = fit(surface.columns, m.slack)
-  const { Box } = surface.elements
-  // The frame centred in its region, the margin split either side, `pads(h)` rows of skin above and below it (rows,
-  // not padding: the desktop did not honour the Box's paddingTop), all in one black block.
+  const full = surface.columns || w + MARGIN
+  const { Box, Text } = surface.elements
+  const gap = Array.from({ length: GAP_TOP }, (_, i) => <Text key={`gap${i}`} mono>{' '}</Text>)
+  // GAP_TOP blank rows, then the picture: rows as wide as the region (the skin runs to its edges, the frame sitting in
+  // it where `leftOf` puts it) with `pads(h)` rows of skin above and below the frame. Rows, not padding: the desktop did
+  // not honour the Box's paddingTop.
   return (
-    <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN} backgroundColor={bg}>
-      {draw(surface.elements, shiftRows([...m.top, ...m.rows, ...m.bottom], m.shift), w)}
+    <Box flexDirection="column" alignItems="center" width={full}>
+      {gap}
+      {draw(surface.elements, [...m.top, ...m.rows, ...m.bottom], full)}
     </Box>
   )
 }

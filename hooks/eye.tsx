@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ClientProps, ElementConstructor, EngineInterface, On } from 'claude-code'
 
 import type { HorusPhase, HorusVoice } from '../types'
-import { fit, MARGIN, MAX_W, pads, W as EYE_W } from './clients/eye-view'
+import { fit, GAP_TOP, MARGIN, MAX_W, pads, W as EYE_W } from './clients/eye-view'
 import * as core from './core'
 
 type $ = EngineInterface
@@ -186,7 +186,7 @@ function view(Client: ElementConstructor<ClientProps>, p: HorusPhase, columns = 
       module="./clients/eye-view.tsx"
       props={{ mode: p === 'outputting' ? 'idle' : p, shift, slack }}
       width={width}
-      height={rows + padTop + padBottom}
+      height={GAP_TOP + rows + padTop + padBottom}
     />
   )
 }

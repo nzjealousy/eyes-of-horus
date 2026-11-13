@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, MAX_SLACK, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, pads, point, shiftRows,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAP_TOP, GAZES, gazeToward, H, init, lids, look, MARGIN, leftOf, merge, MAX_SLACK, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, pads, point, shiftRows,
   pointIn, RAMP, redraw, RELEASE_MS, type Seg, shade, STRETCH_X, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
@@ -235,7 +235,7 @@ test('the pointer gaze is read against the centred frame, not its wider region',
   const m = init('idle', rnd)
   const [w, h] = fit(200)
   const left = (200 - w) / 2
-  const mid = pads(h)[0] + h / 2
+  const mid = GAP_TOP + pads(h)[0] + h / 2
   pointIn(m, left, mid, 200)
   expect(look(m)).toEqual([-1, 0])
   pointIn(m, 100, mid, 200) // the frame's middle
@@ -243,7 +243,7 @@ test('the pointer gaze is read against the centred frame, not its wider region',
   pointIn(m, left + w, mid, 200)
   expect(look(m)).toEqual([1, 0])
   // Before the first layout (0 columns) the region is the frame plus MARGIN.
-  pointIn(m, 1, PAD_TOP + H / 2, 0)
+  pointIn(m, 1, GAP_TOP + PAD_TOP + H / 2, 0)
   expect(look(m)).toEqual([-1, 0])
 })
 
@@ -340,10 +340,10 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
   expect(eye?.props.props).toEqual({ mode: 'thinking', shift: 0, slack: 0 }) // the terminal's cells are as wide as its glyphs: no shift; no width held back by default
-  // The region is 84 wide with no viewport; its frame's rows plus the rows of skin above and below.
+  // The region is 84 wide with no viewport; the gap above, its frame's rows and the rows of skin above and below.
   const [, fh] = fit(84)
   const [padT, padB] = pads(fh)
-  expect([eye?.props.width, eye?.props.height]).toEqual([84, fh + padT + padB])
+  expect([eye?.props.width, eye?.props.height]).toEqual([84, GAP_TOP + fh + padT + padB])
   const box = await ui.find({ type: 'Box' })
   expect([box?.props.width, box?.props.flexDirection, box?.props.justifyContent]).toEqual(['100%', 'row', 'center'])
   await ui.pointer({ type: 'move', x: 81, y: 8, in: 'eye' })
@@ -354,7 +354,7 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   expect(rows.length).toBe(dh + pads(dh)[0] + pads(dh)[1])
   for (const r of rows) {
     expect(r.props.mono).toBe(true)
-    expect([...r.text].length).toBe(dw)
+    expect([...r.text].length).toBe(dw + MARGIN) // the skin runs across the whole region, the margin included
   }
   await ui.unmount()
 })
@@ -365,12 +365,12 @@ test('/horus-fit: the saved percent reaches the eye as a share, and the eye draw
   const eye = await ui.find({ type: 'Client', key: 'eye' })
   expect(eye?.props.props).toEqual({ mode: 'idle', shift: 0, slack: 0.2 })
   const [fw, fh] = fit(84, 0.2)
-  expect([fw < W, eye?.props.height]).toEqual([true, fh + pads(fh)[0] + pads(fh)[1]])
+  expect([fw < W, eye?.props.height]).toEqual([true, GAP_TOP + fh + pads(fh)[0] + pads(fh)[1]])
   await ui.resize({ columns: 84, rows: 7, in: 'eye' })
   await ui.advance(400)
   const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
   expect(rows.length).toBe(fh + pads(fh)[0] + pads(fh)[1])
-  for (const r of rows) expect([...r.text].length).toBe(fw)
+  for (const r of rows) expect([...r.text].length).toBe(84) // still region-wide; only the frame inside is narrower
   await ui.unmount()
 })
 
@@ -406,34 +406,43 @@ for (const columns of [30, 40, 60, 84]) {
     await ui.advance(400)
     const rows = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap === 'truncate-end')
     expect(rows.length).toBe(fh + padT + padB)
-    for (const r of rows) expect([...r.text].length).toBe(fw)
-    const [outer, frameBox] = await ui.findAll({ type: 'Box', in: 'eye' })
+    // Region-wide rows: the skin runs to the region's edges, with the frame (fw wide) sitting in the middle of them.
+    for (const r of rows) expect([...r.text].length).toBe(columns)
+    const [outer, pictureBox] = await ui.findAll({ type: 'Box', in: 'eye' })
     // The frame's rows come from the width alone; above and below it are more rows of skin, not padding (the desktop ignored it).
-    // The outer Box is black too, so the margin beside the picture is not left as the app's own colour.
-    expect([outer?.props.width, outer?.props.alignItems, outer?.props.backgroundColor]).toEqual([columns, 'center', bg])
+    // The outer Box carries the blank gap rows and is not black: only the picture is (so the gap is the app's own colour).
+    expect([outer?.props.width, outer?.props.alignItems, outer?.props.backgroundColor]).toEqual([columns, 'center', undefined])
     const blank = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap !== 'truncate-end' && t.text === ' ')
-    expect(blank.length).toBe(0) // the pad rows are drawn like the frame's, as rows of runs
-    // The rows are centred inside the frame too, so glyphs narrower than a laid-out cell (desktop) stay in the middle.
-    expect([frameBox?.props.width, frameBox?.props.overflow, frameBox?.props.alignItems]).toEqual([fw, 'hidden', 'center'])
+    expect(blank.length).toBe(GAP_TOP) // the gap above the picture; the pad rows are drawn like the frame's, as rows of runs
+    expect(fw <= columns - MARGIN).toBe(true)
+    // The picture is region-wide and black behind its glyphs.
+    expect([pictureBox?.props.width, pictureBox?.props.overflow, pictureBox?.props.backgroundColor]).toEqual([columns, 'hidden', bg])
     await ui.unmount()
   })
 }
 
-test('the rows above and below the frame carry the skin on: every cell shaded, the same width as the frame', () => {
-  for (const columns of [30, 84]) {
+test('the skin runs across the whole region: rows as wide as it, the frame in the middle, the same picture throughout', () => {
+  for (const [columns, shift] of [[30, 0], [84, 0], [84, 2], [200, 0], [200, 2]] as const) {
     const m = init('idle', rnd)
+    m.shift = shift
     redraw(m, columns)
     const [w, h] = fit(columns)
+    const left = leftOf(columns, w, shift)
     expect([m.top.length, m.rows.length, m.bottom.length]).toEqual([pads(h)[0], h, pads(h)[1]])
-    for (const line of text([...m.top, ...m.bottom])) {
-      expect([...line].length).toBe(w)
+    for (const line of text([...m.top, ...m.rows, ...m.bottom])) {
+      expect([...line].length).toBe(columns)
       expect(NARROW.test(line)).toBe(true)
-      expect(line.includes(BLANK)).toBe(false)
     }
-    // One picture: the frame's rows are the same cells as the middle of the whole.
-    const all = text(eyeCells(w, h, { ox: 0, oy: 0, open: 1 }, -pads(h)[0], h + pads(h)[1]).map(merge))
-    expect(text([...m.top, ...m.rows, ...m.bottom])).toEqual(all)
-    expect(text(m.rows)).toEqual(text(frame(m, w, h)))
+    // Beside the frame there is skin, not a black strip: the cells right next to it are shaded (not blank).
+    for (const line of text([...m.top, ...m.rows, ...m.bottom])) {
+      expect(line.slice(Math.max(0, left - 2), left).includes(BLANK)).toBe(false)
+      expect(line.slice(left + w, left + w + 2).includes(BLANK)).toBe(false)
+    }
+    // One picture: the frame's cells are the same as drawing the frame alone, whatever lies beside it.
+    const whole = text(eyeCells(w, h, { ox: 0, oy: 0, open: 1 }, -pads(h)[0], h + pads(h)[1], -left, columns - left).map(merge))
+    expect(text([...m.top, ...m.rows, ...m.bottom])).toEqual(whole)
+    const alone = text(frame(m, w, h))
+    expect(text(m.rows).map(r => r.slice(left, left + w))).toEqual(alone)
   }
   expect([PAD_TOP, PAD_BOTTOM, pads(H)]).toEqual([1, 0, [1, 0]])
 })
@@ -451,7 +460,7 @@ test('the frame sits in the middle of its region: equal margins either side, one
   for (const columns of [40, 41, 84, 85]) {
     const m = init('idle', rnd)
     const [, h] = fit(columns)
-    pointIn(m, columns / 2 - 0.5, pads(h)[0] + h / 2 - 0.5, columns)
+    pointIn(m, columns / 2 - 0.5, GAP_TOP + pads(h)[0] + h / 2 - 0.5, columns)
     expect(look(m)).toEqual([0, 0])
   }
 })
@@ -588,8 +597,8 @@ test('shiftRows moves every row right by n cells and keeps its width; the pointe
   const m = init('idle', rnd)
   m.shift = 2
   const [w, h] = fit(80)
-  pointIn(m, 40 + 2, pads(h)[0] + h / 2 - 0.5, 80)
+  pointIn(m, 40 + 2, GAP_TOP + pads(h)[0] + h / 2 - 0.5, 80)
   const centred = init('idle', rnd)
-  pointIn(centred, 40 - ((80 - w) / 2 - 1) + (80 - w) / 2 - 1, pads(h)[0] + h / 2 - 0.5, 80)
+  pointIn(centred, 40 - ((80 - w) / 2 - 1) + (80 - w) / 2 - 1, GAP_TOP + pads(h)[0] + h / 2 - 0.5, 80)
   expect(look(m)).toEqual(look(centred))
 })

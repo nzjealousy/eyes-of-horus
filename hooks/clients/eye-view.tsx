@@ -1,10 +1,11 @@
 import type { ClientSurface } from 'claude-code'
 
-import { aqua, aquaDim, bg, dim, gold, goldBright, orbCore, purple, purpleDim, text, violet, warn } from '../theme'
+import { bg, dim, err, gold, goldBright, purple, purpleDim, text, violet, warn } from '../theme'
 
-// The Eye of Horus as ASCII shading: each cell's luminance comes from an analytic eye (almond lids with a blink,
-// sclera, a gold iris ring, pupil, specular, brow, aqua glow) and picks a glyph from a density ramp, coloured from
-// the theme; star sparkles twinkle in the empty cells around it. All motion lives here, on the frame clock.
+// The Eye of Horus as a photo-like ASCII crop: every cell of the frame is shaded. Its luminance comes from an analytic
+// picture (skin lit from the upper left, almond lids with a blink, sclera, a gold iris, pupil, catchlights, and kohl,
+// lashes, brow and the Wedjat's markings as dark strokes) and picks a glyph from a density ramp, coloured from the
+// theme. All motion lives here, on the frame clock.
 
 export type EyeMode = 'idle' | 'thinking' | 'tool'
 /** `shift`: cells to move the drawing right, for a surface whose cell is wider than its glyph (desktop). */
@@ -34,9 +35,9 @@ export type EyeState = {
   blinkAt: number
   nextSweep: number
   sweepAt: number
-  /** The drawn frame and its text key: the module redraws only when the key changes. */
+  /** The drawn frame and the pose it was drawn for (`key`): the module redraws only when the pose changes. */
   rows: Seg[][]
-  /** The starry rows above and below the frame (PAD_TOP and PAD_BOTTOM of them). */
+  /** The rows of skin above and below the frame (`pads` of them), part of the same picture. */
   top: Seg[][]
   bottom: Seg[][]
   key: string
@@ -44,7 +45,7 @@ export type EyeState = {
 
 /** The frame's reference size in cells (the region is MARGIN wider), and its largest: a narrower region shrinks it in this shape. */
 export const W = 82
-export const H = 19
+export const H = 32
 export const MAX_W = W
 export const MIN_H = 6
 /** The most of the region's columns `/horus-fit` may leave unused (a share, 0 to this). */
@@ -53,13 +54,11 @@ export const FRAME = 90
 export const RELEASE_MS = 2500
 /** Columns the frame leaves free in its region, so a line a hair wider than its cells (desktop) never wraps. */
 export const MARGIN = 2
-/** Starry black rows above and below the frame, so the eye does not sit tight against the reply or what follows. */
+/** Rows of skin above and below the frame: the picture runs on into them (more forehead, a little more cheek). */
 export const PAD_TOP = 4
 export const PAD_BOTTOM = 1
-/** The starry rows above and below a frame `h` rows tall: PAD_TOP and PAD_BOTTOM at the reference height, in proportion otherwise. */
+/** The rows above and below a frame `h` rows tall: PAD_TOP and PAD_BOTTOM at the reference height, in proportion otherwise. */
 export const pads = (h: number): [number, number] => [Math.max(1, Math.round((PAD_TOP * h) / H)), Math.max(1, Math.round((PAD_BOTTOM * h) / H))]
-/** Columns and rows at the frame's edge where no sparkle goes, so a star never touches the region's edge. */
-export const SPARK_INSET: readonly [number, number] = [2, 1]
 const SWEEP_MS = 1500
 /** Lid openness on each frame of a blink. */
 export const BLINK = [0.55, 0.12, 0, 0.3, 0.7]
@@ -87,7 +86,11 @@ export const mix = (a: string, b: string, f: number) => {
 // The iris gradient, pupil edge to rim: gold core to amber.
 const IRIS = [goldBright, gold, mix(gold, warn, 0.5), warn]
 const AMBER_DARK = mix(warn, purpleDim, 0.45)
-const CARUNCLE = mix(warn, violet, 0.5)
+const CARUNCLE = mix(err, violet, 0.4)
+// Skin, shadow to highlight: the theme's purples, warming where the light falls.
+const SKIN = [mix(purpleDim, purple, 0.55), purple, mix(purple, violet, 0.55), violet, mix(violet, goldBright, 0.4)]
+const KOHL = purpleDim
+const BROW = mix(purpleDim, purple, 0.5)
 
 /** Consecutive cells of one colour as one run; a blank joins whatever run it follows. */
 export function merge(cells: Seg[]): Seg[] {
@@ -103,84 +106,32 @@ export function merge(cells: Seg[]): Seg[] {
   return out
 }
 
-// ---- sparkles -------------------------------------------------------------------------------------------------
-
-export type Sparkle = { x: number; y: number; period: number; phase: number; hue: number }
-const TWINKLE: ReadonlyArray<readonly [number, string]> = [
-  [0.25, BLANK],
-  [0.5, '·'],
-  [0.8, '+'],
-  // ASCII peak, not '✦': a mono face without it falls back to a wider glyph and the desktop row wraps.
-  [1.01, '*'],
-]
-const HUES: ReadonlyArray<readonly [string, string]> = [
-  [aqua, orbCore],
-  [gold, goldBright],
-  [violet, text],
-]
-
-/** How lit a sparkle is at `t`: 0 (out) to 1 (peak) and back, once per period from its own phase. */
-export const sparkleLevel = (s: Pick<Sparkle, 'period' | 'phase'>, t: number) => 0.5 - 0.5 * Math.cos(2 * Math.PI * (t / s.period + s.phase))
-
-/** A sparkle's cell at a level: dim dot, cross, star. */
-export function twinkle(level: number, hue: number): Seg {
-  const ch = TWINKLE.find(([at]) => level < at)?.[1] ?? '*'
-  const [mid, peak] = HUES[hue % HUES.length] ?? [aqua, orbCore]
-  return [ch, ch === '·' ? dim : ch === '+' ? mid : peak]
-}
-
-/** Up to about one sparkle per 48 cells, placed (seeded, so stable) only where `isEmpty` says the cell is dark. */
-export function scatter(w: number, h: number, isEmpty: (x: number, y: number) => boolean, seed = 7): Sparkle[] {
-  let s = seed
-  const rnd = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648)
-  const out: Sparkle[] = []
-  const want = Math.round((w * h) / 48)
-  for (let i = 0; i < 400 && out.length < want; i++) {
-    const x = Math.floor(rnd() * w)
-    const y = Math.floor(rnd() * h)
-    const period = 1400 + rnd() * 2200
-    const phase = rnd()
-    if (!isEmpty(x, y) || out.some(o => Math.abs(o.x - x) < 3 && Math.abs(o.y - y) < 2)) continue
-    out.push({ x, y, period, phase, hue: out.length })
-  }
-  return out
-}
-
-/** Lays sparkles over a grid of cells, in the cells still blank. */
-export function sparkle(grid: Seg[][], list: readonly Sparkle[], t: number) {
-  for (const s of list) {
-    const row = grid[s.y]
-    if (row?.[s.x]?.[0] === BLANK) row[s.x] = twinkle(sparkleLevel(s, t), s.hue)
-  }
-}
-
 // ---- the eye field --------------------------------------------------------------------------------------------
 
-export type Pose = { ox: number; oy: number; open: number; t: number }
+/** `row`: a cell's height in eye units (set by `eyeCells`), so a line thinner than a row is still drawn on one. */
+export type Pose = { ox: number; oy: number; open: number; row?: number }
 
 const A = 15 // the almond's half-width
-// The Wedjat's extent in eye units: brow top to the spiral's foot, the inner corner to the cosmetic tail's end
-// (asymmetric, so its middle sits right of the pupil), and that middle.
+// The Wedjat's extent in eye units: brow top to the spiral's foot, the inner corner to the wing's tip (asymmetric, so
+// its middle sits right of the pupil and above it), and that middle.
 const EXT_W = 41
-const EXT_H = 36.6
+const EXT_H = 42.2
 const MID_X = 4.25
-const MID_Y = 1.05
-/** The brow's height over the middle (room for lashes, crease and lid shading below it), the lashes' spacing, and the pupil's and iris's radii (all in eye units). */
-const BROW_Y = -15.5
-const LASH_GAP = 1.8
-const PUPIL_R = 2.2
-const IRIS_R = 5.5
-/** How much of the frame the eye fills, on its tighter axis. */
-const FILL = 0.94
+const MID_Y = -1.4
+/** The brow's height at its arch, the crease's over the middle, the lashes' spacing, the wing's length past the outer corner, and the pupil's and iris's radii (all in eye units). */
+const BROW_Y = -20
+const CREASE = 13.5
+const LASH_GAP = 2.4
+const WING = 10
+const PUPIL_R = 3
+const IRIS_R = 7.2
+/** How much of the frame the Wedjat fills, on its tighter axis, and how strong the skin's grain is. */
+const FILL = 0.87
+const GRAIN = 0.07
 
 /** How much wider than its natural shape the eye is drawn (x only), for more glyph detail across: the iris, pupil and highlight are kept round. */
 export const STRETCH_X = 1.35
 
-/** Eye units of a cell centre: x in columns (STRETCH_X columns to a unit's width), y in half-rows (a cell is about twice as tall as wide), scaled so the eye fills FILL of the frame. */
-function units(x: number, y: number, w: number, h: number): [number, number] {
-  const k = FILL * Math.min(w / (EXT_W * STRETCH_X), (2 * h) / EXT_H)
-  return [(x + 0.5 - w / 2) / (k * STRETCH_X) + MID_X, ((y + 0.5 - h / 2) * 2) / k + MID_Y]
-}
 /** Upper and lower lid heights at `px`: open, they part; at 0 they meet in one line just below the middle. */
 export function lids(px: number, open: number): [number, number] {
   // An exponent under 1 rounds the corners and fills the lid out, leaving the middle height as it was.
@@ -216,109 +167,131 @@ export function distTo(line: readonly Pt[], px: number, py: number): number {
   return best
 }
 
-/** Luminance and colour of one point of the eye, in eye units. */
-export function eyeCell(px: number, py: number, p: Pose): [number, string] {
-  const [yU, yL] = lids(px, p.open)
-  const isInside = Math.abs(px) < A && py > yU && py < yL
-  // The kohl: a heavy, dense line on the upper lid, its bold winged tail past the outer corner (thick at the corner,
-  // thinning to its tip), and the lower lid lined too.
-  if (Math.abs(px) < A + 0.5 && Math.abs(py - yU) < 1.7) return [0.85 - 0.1 * Math.abs(py - yU), violet]
-  if (px >= A && px < A + 9.5 && Math.abs(py - (0.4 + 0.06 * (px - A))) < 1.7 - 0.08 * (px - A)) return [0.8 - 0.02 * (px - A), violet]
-  if (Math.abs(px) < A && Math.abs(py - yL) < 1.2) return [0.7, purple]
-  // The brow: a thick feathered arc over the eye, thinning as it runs on past the outer corner.
-  const yB = BROW_Y + 0.8 * (px / A) ** 2
-  const feather = 0.8 + 0.3 * Math.sin(px * 2.3)
-  if (px > -A - 0.5 && px < A + 8.5 && Math.abs(py - yB) < (2 - 0.025 * (px + A)) * feather) return [0.66 - 0.12 * Math.abs(py - yB) + 0.06 * Math.sin(px * 2.3), violet]
-  // Short lashes up from the open upper lid, a little longer and leaning out toward the outer corner.
-  if (p.open > 0.3 && px > -A + 3 && px < A - 1) {
-    const ph = (px + A) / LASH_GAP
-    const len = (2.4 + 2.2 * ((px + A) / (2 * A))) * p.open
-    const lean = 0.2 * (yU - py)
-    const along = ph - Math.floor(ph) + lean / LASH_GAP
-    if (Math.abs(along - 0.5) < 0.17 && py < yU - 1.5 && py > yU - 1.5 - len) return [0.55, violet]
-  }
-  // The eyelid: a crease above the lashes that stays when the lid shuts, and soft skin shading between it and the lid.
-  if (px > -A + 1 && px < A - 1) {
-    const yC = lids(px, 1)[0] * 1.55
-    if (Math.abs(py - yC) < 0.7) return [0.4, purple]
-    if (py > yC && py < yU) return [0.13 + 0.09 * ((py - yC) / (yU - yC || 1)), purple]
-  }
-  if (py > 5) {
-    const tear = distTo(TEAR, px, py)
-    if (tear < 1) return [0.66 - 0.12 * tear, violet]
-    const curl = distTo(SPIRAL, px, py)
-    if (curl < 0.95) return [0.66 - 0.12 * curl, violet]
-  }
-  if (!isInside) {
-    // Inside the eye's outline but not the opening: lid skin, sparse purple, darkest at the outline.
-    const e = Math.hypot(px / (A + 1), py / (py < 0 ? 11 : 7.5)) - 1
-    if (e < 0) return [0.08 + 0.1 * clamp(-e * 3, 0, 1), purple]
-    const lum = 0.16 * Math.exp(-e * 7) * (0.85 + 0.15 * Math.sin(p.t / 500 + Math.atan2(py, px) * 2))
-    return [lum < 0.035 ? 0 : lum, lum > 0.11 ? aqua : aquaDim]
-  }
-  // The iris and pupil are round on screen: an x distance is scaled back by the stretch.
-  const dx = (px - p.ox) * STRETCH_X
-  const dy = py - p.oy
-  const r = Math.hypot(dx, dy)
-  // Two highlights: a big one up and left, a small one opposite.
-  if (Math.hypot(dx + 2, dy + 1.8) < 1.3) return [1, text]
-  if (Math.hypot(dx - 2.2, dy - 2.4) < 0.7) return [0.85, text]
-  if (r < PUPIL_R) return [0, purpleDim]
-  if (r < IRIS_R) {
-    const q = (r - PUPIL_R) / (IRIS_R - PUPIL_R)
-    // Radial fibres, two soft rings, and a dark limbal edge.
-    const fibre = 0.12 * Math.sin(Math.atan2(dy, dx) * 14)
-    const ring = 0.1 * Math.cos(q * Math.PI * 4)
-    const lum = 0.95 - 0.3 * q + fibre + ring - (q > 0.82 ? 0.38 : 0)
-    return [lum, q > 0.82 ? AMBER_DARK : (IRIS[Math.floor(q * IRIS.length)] ?? warn)]
-  }
-  // The caruncle: a small pink blob in the inner corner.
-  if (Math.hypot((px + A - 1.2) * STRETCH_X, py - 0.8) < 1.6) return [0.5, CARUNCLE]
-  // Sclera: brightest by the iris, darker toward both corners and under the upper lid, shaded purple there.
-  const edge = Math.min(py - yU, yL - py)
-  const base = 0.16 + 0.22 * clamp(edge / 3.5, 0, 1)
-  return [base * (1 - 0.55 * (px / A) ** 2), py - yU < 2.5 ? purple : dim]
+/** 0 at and below `a`, 1 at and above `b`, eased between. */
+const smooth = (v: number, a: number, b: number) => {
+  const t = clamp((v - a) / (b - a), 0, 1)
+  return t * t * (3 - 2 * t)
+}
+/** A soft bump: 1 at 0, gone a few `s` away. */
+const bump = (d: number, s: number) => Math.exp(-((d / s) ** 2))
+/** Film grain, 0..1, fixed per point. */
+const grain = (px: number, py: number) => {
+  const n = Math.sin(px * 12.9898 + py * 78.233) * 43758.5453
+  return n - Math.floor(n)
 }
 
-/** The eye's cells, `w` x `h`, before sparkles. */
-export function eyeCells(w: number, h: number, p: Pose): Seg[][] {
-  return Array.from({ length: h }, (_, y) =>
+/**
+ * Skin luminance outside the eye's opening, lit softly from the upper left and falling off toward the frame's corners
+ * like a photo: the brow bone, the lid's dome and its crease, the socket's shadow by the nose, the hollow under the
+ * eye and the cheek. `f` is the almond's profile at `px` (1 in the middle, 0 at and past the corners), `yU` the upper lid.
+ */
+function skin(px: number, py: number, f: number, yU: number): number {
+  const vx = (px - MID_X) / 30
+  const vy = (py - MID_Y) / 36
+  let l = 0.7 - 0.26 * (vx * vx + vy * vy) + 0.13 * bump(px - 7, 11) * bump(py + 15.5, 2.4) - 0.16 * bump(px + 18, 6) * bump(py + 4, 9) + 0.1 * bump(px - 3, 13) * bump(py - 15, 6)
+  if (f > 0 && py <= yU) {
+    const yC = -3 - (CREASE - 3) * f ** 0.6
+    if (py > yC) l += 0.13 * Math.sin((Math.PI * (py - yC)) / (yU - yC)) - 0.03
+    l -= 0.3 * Math.sqrt(f) * bump(py - yC, 0.9)
+  } else if (f > 0) l -= 0.17 * f * bump(py - 6 * f - 2.6, 1.8)
+  return l
+}
+
+/** Luminance and colour of one point of the picture, in eye units: the eyeball inside the lids, skin everywhere else, then the dark strokes (kohl, wing, lashes, brow, teardrop, spiral) inked over both. */
+export function eyeCell(px: number, py: number, p: Pose): [number, string] {
+  const f = Math.max(0, 1 - (px / A) ** 2) ** 0.75
+  const yU = f * (1.5 - 9.5 * p.open)
+  const yL = f * (1.5 + 4.5 * p.open)
+  const u = (px + A) / (2 * A) // 0 at the inner corner, 1 at the outer
+  let lum: number
+  let c: string
+  if (py > yU && py < yL) {
+    // The iris and pupil are round on screen: an x distance is scaled back by the stretch.
+    const dx = (px - p.ox) * STRETCH_X
+    const dy = py - p.oy
+    const r = Math.hypot(dx, dy)
+    // The upper lid's shadow on the eyeball.
+    const lit = 0.6 + 0.4 * smooth(py - yU, 1.5, 5)
+    // Two catchlights: a big one up and left, a small one opposite.
+    if (Math.hypot(dx + 2.4, dy + 2.2) < 1.8 || Math.hypot(dx - 2.8, dy - 3) < 0.9) {
+      lum = 1
+      c = text
+    } else if (r < PUPIL_R) {
+      lum = 0
+      c = KOHL
+    } else if (r < IRIS_R) {
+      const q = (r - PUPIL_R) / (IRIS_R - PUPIL_R)
+      // Radial fibres, a soft ring, and the dark limbal edge.
+      lum = q > 0.8 ? 0.13 * lit : (0.7 - 0.2 * q + 0.12 * Math.sin(Math.atan2(dy, dx) * 14) + 0.06 * Math.cos(q * Math.PI * 3)) * lit
+      c = q > 0.8 ? AMBER_DARK : (IRIS[Math.floor(q * 5)] ?? warn)
+    } else if (Math.hypot((px + A - 2.4) * STRETCH_X, py - 0.5) < 2.1) {
+      // The caruncle: a small pink blob in the inner corner.
+      lum = 0.5
+      c = CARUNCLE
+    } else {
+      // Sclera: brightest by the iris, darker toward both corners, under the upper lid and along the lower one.
+      lum = (0.93 - 0.28 * (px / A) ** 2 - 0.003 * py * py + 0.05 * (grain(px, py) - 0.5)) * lit * (0.8 + 0.2 * smooth(yL - py, 0.5, 2.5))
+      c = lum > 0.62 ? text : dim
+    }
+  } else {
+    const l = skin(px, py, f, yU)
+    lum = l + GRAIN * (grain(px, py) - 0.5)
+    c = SKIN[l < 0.4 ? 0 : l < 0.52 ? 1 : l < 0.63 ? 2 : l < 0.74 ? 3 : 4]!
+  }
+  let ink = 0
+  // The least half-thickness of a line that must not fall between two rows: half a row, less what its soft edge covers.
+  const thin = (p.row ?? 0) / 2 - 0.3
+  if (f > 0) {
+    // The kohl: a heavy line on the upper lid, thickening toward the outer corner, and a thinner one lining the lower lid.
+    const tU = Math.max(thin, 0.5 + 1.3 * u)
+    const tL = Math.max(thin, 0.25 + 0.6 * u)
+    ink = Math.max(1 - smooth(Math.abs(py - yU + 0.4), tU, tU + 0.7), 1 - smooth(Math.abs(py - yL - 0.2), tL, tL + 0.6))
+    // Lashes fanning up from the open upper lid: longer toward the outer corner, leaning in at the inner end and out at the outer.
+    const h = yU - 0.4 - tU - py
+    if (p.open > 0.3 && h > 0 && u > 0.08) {
+      const ph = (px - 0.9 * (u - 0.35) * h) / LASH_GAP
+      const n = Math.floor(ph)
+      // Each lash has its own length, so their tips are ragged.
+      const len = (2 + 3.5 * u) * p.open * (0.7 + 0.6 * grain(n, 0))
+      if (h < len && Math.abs(ph - n - 0.5) < 0.24 - 0.13 * (h / len)) ink = 1
+    }
+  } else if (px >= A && px < A + WING) {
+    // The wing: the kohl's bold tail past the outer corner, flicking up and thinning to its tip.
+    const s = px - A
+    const tW = 2.3 * (1 - s / WING) ** 0.6
+    ink = 1 - smooth(Math.abs(py - 0.2 + 0.25 * s + 0.02 * s * s), tW - 0.25, tW + 0.35)
+  }
+  if (ink < 1 && py < -8 && px > -A - 4 && px < A + 9) {
+    // The brow: a thick arc of hair over the eye, arching past the middle and thinning down to its tail.
+    const yB = BROW_Y + (px < 6 ? 0.008 : 0.03) * (px - 6) ** 2
+    const tB = 2.5 * smooth(px, -A - 4, -A) * clamp((A + 9 - px) / (2 * A + 9), 0, 1) ** 0.6
+    ink = Math.max(ink, (1 - smooth(Math.abs(py - yB), tB * 0.55, tB + 0.2)) * (0.66 + 0.14 * Math.sin(px * 2.6 + py * 1.3)))
+    if (ink > 0.5) return [lum * (1 - ink), BROW]
+  }
+  if (ink < 1 && py > 5.2 && py < 20) {
+    // The Wedjat's teardrop (swelling toward its foot) and spiral, drawn in kohl on the cheek.
+    const tT = Math.max(thin, 0.45 + 0.05 * (py - 6))
+    const tS = Math.max(thin, 0.7)
+    if (px > -8 && px < 0) ink = Math.max(ink, 1 - smooth(distTo(TEAR, px, py), tT, tT + 0.5))
+    else if (px > 0 && px < 21) ink = Math.max(ink, 1 - smooth(distTo(SPIRAL, px, py), tS, tS + 0.5))
+  }
+  return ink > 0.5 ? [lum * (1 - ink), KOHL] : [lum * (1 - ink), c]
+}
+
+/**
+ * The picture's cells, `w` wide: rows `y0` up to `y1` of a frame `h` rows tall (rows outside 0..h are the skin above and
+ * below the frame). A cell centre in eye units: x in columns (STRETCH_X columns to a unit's width), y in half-rows (a
+ * cell is about twice as tall as wide), scaled so the Wedjat fills FILL of the frame.
+ */
+export function eyeCells(w: number, h: number, p: Pose, y0 = 0, y1 = h): Seg[][] {
+  const k = FILL * Math.min(w / (EXT_W * STRETCH_X), (2 * h) / EXT_H)
+  const pose = { ...p, row: 2 / k }
+  return Array.from({ length: y1 - y0 }, (_, i) =>
     Array.from({ length: w }, (_, x): Seg => {
-      const [px, py] = units(x, y, w, h)
-      const [lum, c] = eyeCell(px, py, p)
+      const [lum, c] = eyeCell((x + 0.5 - w / 2) / (k * STRETCH_X) + MID_X, ((y0 + i + 0.5 - h / 2) * 2) / k + MID_Y, pose)
       return [shade(lum), c]
     }),
   )
-}
-
-const sparkCache = new Map<string, Sparkle[]>()
-const eyeSparkles = (w: number, h: number) => {
-  const k = `${w}x${h}`
-  let s = sparkCache.get(k)
-  if (!s) {
-    const open = eyeCells(w, h, { ox: 0, oy: 0, open: 1, t: 0 })
-    // Dark in the open eye, its neighbours dark too, so a star never sits against the glow.
-    const isDark = (x: number, y: number) => (open[y]?.[x]?.[0] ?? BLANK) === BLANK
-    const [ix, iy] = SPARK_INSET
-    const isInside = (x: number, y: number) => x >= ix && x < w - ix && y >= iy && y < h - iy
-    s = scatter(w, h, (x, y) => isInside(x, y) && isDark(x, y) && isDark(x - 1, y) && isDark(x + 1, y))
-    sparkCache.set(k, s)
-  }
-  return s
-}
-
-const padCache = new Map<string, Sparkle[]>()
-/** `n` blank rows of `w` cells with stars in them, for the black above and below the frame (same density and look as the frame's). */
-export function padRows(n: number, w: number, t: number, seed: number): Seg[][] {
-  const k = `${n}x${w}:${seed}`
-  let list = padCache.get(k)
-  if (!list) {
-    list = scatter(w, n, x => x >= SPARK_INSET[0] && x < w - SPARK_INSET[0], seed)
-    padCache.set(k, list)
-  }
-  const grid = Array.from({ length: n }, () => Array.from({ length: w }, (): Seg => [BLANK, bg]))
-  sparkle(grid, list, t)
-  return grid.map(merge)
 }
 
 // ---- motion ---------------------------------------------------------------------------------------------------
@@ -397,13 +370,8 @@ export function point(m: EyeState, x: number, y: number, w = W, h = H) {
 
 /** The frame, `w` x `h`, as coloured runs per row. */
 export function frame(m: EyeState, w = W, h = H): Seg[][] {
-  const grid = eyeCells(w, h, { ox: m.ox, oy: m.oy, open: openness(m), t: m.t })
-  sparkle(grid, eyeSparkles(w, h), m.t)
-  return grid.map(merge)
+  return eyeCells(w, h, { ox: m.ox, oy: m.oy, open: openness(m) }).map(merge)
 }
-
-/** A frame as one string, to tell whether it changed. */
-export const keyOf = (rows: Seg[][]) => rows.map(r => r.map(s => s.join('')).join('')).join('\n')
 
 const asMode = (v: unknown): EyeMode => (v === 'thinking' || v === 'tool' ? v : 'idle')
 
@@ -428,15 +396,15 @@ export function pointIn(m: EyeState, x: number, y: number, columns: number) {
 /** Draws the frame again; true when it changed. */
 export function redraw(m: EyeState, columns: number): boolean {
   const [w, h] = fit(columns, m.slack)
-  const next = frame(m, w, h)
   const [padTop, padBottom] = pads(h)
-  const top = padRows(padTop, w, m.t, 11)
-  const bottom = padRows(padBottom, w, m.t, 23)
-  const key = keyOf([...top, ...next, ...bottom])
+  const open = openness(m)
+  // The picture depends on the size and the pose alone, so a settled eye is not shaded again.
+  const key = `${w}x${h}:${m.ox.toFixed(2)},${m.oy.toFixed(2)},${open}`
   if (key === m.key) return false
-  m.rows = next
-  m.top = top
-  m.bottom = bottom
+  const all = eyeCells(w, h, { ox: m.ox, oy: m.oy, open }, -padTop, h + padBottom).map(merge)
+  m.top = all.slice(0, padTop)
+  m.rows = all.slice(padTop, padTop + h)
+  m.bottom = all.slice(padTop + h)
   m.key = key
   return true
 }
@@ -504,8 +472,8 @@ export default function EyeView(props: EyeProps, surface: ClientSurface<EyeState
   m.slack = clamp(Number(props?.slack) || 0, 0, MAX_SLACK)
   const [w] = fit(surface.columns, m.slack)
   const { Box } = surface.elements
-  // The frame centred in its region, the margin split either side, `pads(h)` starry rows above and below. Rows,
-  // not padding: the desktop did not honour the Box's paddingTop. All in one black block, so the stars reach the top.
+  // The frame centred in its region, the margin split either side, `pads(h)` rows of skin above and below it (rows,
+  // not padding: the desktop did not honour the Box's paddingTop), all in one black block.
   return (
     <Box flexDirection="column" alignItems="center" width={surface.columns || w + MARGIN} backgroundColor={bg}>
       {draw(surface.elements, shiftRows([...m.top, ...m.rows, ...m.bottom], m.shift), w)}

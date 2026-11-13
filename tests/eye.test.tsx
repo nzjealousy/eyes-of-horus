@@ -2,11 +2,11 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
-  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, MAX_SLACK, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, padRows, pads, point, shiftRows,
-  pointIn, RAMP, redraw, RELEASE_MS, scatter, type Seg, shade, SPARK_INSET, STRETCH_X, sparkleLevel, twinkle, W,
+  advance, BLANK, BLINK, eyeCell, eyeCells, fit, FRAME, frame, GAZES, gazeToward, H, init, lids, look, MARGIN, merge, MAX_SLACK, MAX_W, MIN_H, openness, PAD_BOTTOM, PAD_TOP, pads, point, shiftRows,
+  pointIn, RAMP, redraw, RELEASE_MS, type Seg, shade, STRETCH_X, W,
 } from '../hooks/clients/eye-view'
 import { diagnose, endsReply, eyeWidth, HIDE_MS, rowId, show, speakable } from '../hooks/eye'
-import { bg, gold, goldBright, orbCore, text as white } from '../hooks/theme'
+import { bg, dim, gold, goldBright, text as white } from '../hooks/theme'
 
 const rnd = () => 0.5
 const text = (rows: Seg[][]) => rows.map(r => r.map(s => s[0]).join(''))
@@ -83,18 +83,18 @@ test('runs: one per colour, a blank joins its neighbour', () => {
   expect(merge([[BLANK, 'y'], ['a', 'x']])).toEqual([[`${BLANK}a`, 'x']])
   const rows = frame(init('idle', rnd))
   for (const row of rows) for (let i = 1; i < row.length; i++) expect(row[i]?.[1] === row[i - 1]?.[1]).toBe(false)
-  // An 82 x 16 frame is far fewer runs than cells.
+  // The frame is far fewer runs than cells, though every cell is shaded.
   expect(rows.reduce((n, r) => n + r.length, 0) < (W * H) / 3).toBe(true)
 })
 
-test('the eye is 82 x 19 before layout and otherwise sized from the region width alone, in that shape', () => {
+test('the eye is 82 x 32 before layout and otherwise sized from the region width alone, in that shape', () => {
   expect(fit(0)).toEqual([W, H])
-  expect([W, H, MAX_W]).toEqual([82, 19, 82])
-  // The frame leaves MARGIN columns free (full size at the desktop's 84), never grows past MAX_W and its rows follow in the 82:19 shape.
+  expect([W, H, MAX_W]).toEqual([82, 32, 82])
+  // The frame leaves MARGIN columns free (full size at the desktop's 84), never grows past MAX_W and its rows follow in the 82:32 shape.
   expect([fit(200), fit(84)]).toEqual([[MAX_W, H], [W, H]])
   expect([fit(42), fit(30), fit(10), fit(1)].map(f => f[0])).toEqual([40, 28, 8, 1])
   // `slack` (/horus-fit) leaves a share of the columns free too, up to MAX_SLACK; the rows follow the width.
-  expect([fit(84, 0.15), fit(84, 0.2), fit(84, 0.9), fit(84, -1)]).toEqual([[69, 16], [65, 15], fit(84, MAX_SLACK), [W, H]])
+  expect([fit(84, 0.15), fit(84, 0.2), fit(84, 0.9), fit(84, -1)]).toEqual([[69, 27], [65, 25], fit(84, MAX_SLACK), [W, H]])
   for (const slack of [0, 0.15, MAX_SLACK]) {
     for (const columns of [1, 10, 30, 60, 84, 120, 200, 400]) {
       const [w, h] = fit(columns, slack)
@@ -102,20 +102,20 @@ test('the eye is 82 x 19 before layout and otherwise sized from the region width
       if (w >= 2 * MIN_H * 5) expect(Math.abs(h - (w * H) / W) <= 0.5).toBe(true)
     }
   }
-  // The desktop region measured live: 77 x 16 once the frame is 16 rows. Fitting to its echoed 7 rows drew the eye 23 x 7.
+  // Skin fills the whole frame now, so the eye's size is read off its opening: the cells in the sclera's colours.
   const extent = (w: number, h: number) => {
-    const lit = eyeCells(w, h, { ox: 0, oy: 0, open: 1, t: 0 }).map(r => r.map(s => s[0] !== BLANK))
+    const lit = eyeCells(w, h, { ox: 0, oy: 0, open: 1 }).map(r => r.map(s => s[0] !== BLANK && (s[1] === white || s[1] === dim)))
     const xs = lit.flatMap(r => r.flatMap((on, x) => (on ? [x] : [])))
     return [Math.max(...xs) - Math.min(...xs) + 1, lit.filter(r => r.includes(true)).length]
   }
-  expect(extent(W, H)).toEqual([58, 17]) // the Wedjat's tail, tear and spiral take room in the 19 rows; STRETCH_X makes it 58 of the 82 columns
-  // The frame's shape keeps the eye inside it at every width: its lit extent never exceeds the frame.
+  expect(extent(W, H)).toEqual([49, 8]) // the almond between its kohl lines: about 3:1 on screen, a cell being twice as tall as wide
+  // The frame's shape keeps the eye inside it at every width: its opening never reaches the frame's edge.
   for (const columns of [30, 60, 84]) {
     const [w, h] = fit(columns)
     const [ew, eh] = extent(w, h)
-    expect(ew <= w && eh <= h).toBe(true)
+    expect(ew < w && eh < h).toBe(true)
   }
-  expect(extent(75, 7)).toEqual([21, 7]) // the old bug: fitting to an echoed 7 rows drew a tiny eye
+  expect(extent(75, 7)).toEqual([8, 1]) // the old bug: fitting to an echoed 7 rows drew a tiny eye
   for (const [w, h] of [[82, 16], [40, 13], [24, 9], [60, 17]] as const) {
     const rows = text(frame(init('idle', rnd), w, h))
     expect(rows.length).toBe(h)
@@ -129,37 +129,64 @@ test('the eye is 82 x 19 before layout and otherwise sized from the region width
 })
 
 test('the eye is drawn STRETCH_X wider, but its iris stays round on screen', () => {
-  const pose = { ox: 0, oy: 0, open: 1, t: 0 }
-  // 4 screen units across the iris is inside it, 7 is the sclera; both across (x, scaled by the stretch) and down (y).
-  expect([eyeCell(4 / STRETCH_X, 0, pose)[0] > 0.55, eyeCell(7 / STRETCH_X, 0, pose)[0] < 0.45]).toEqual([true, true])
-  // (Down, past the iris the kohl lines cover the lids, so only the inside is checked there.)
-  expect(eyeCell(0, 4, pose)[0] > 0.55).toBe(true)
+  const pose = { ox: 0, oy: 0, open: 1 }
+  const colour = (px: number, py: number, p = pose) => eyeCell(px, py, p)[1]
+  // 4.5 screen units from the pupil's middle is the iris's gold band, across (x, scaled by the stretch) as well as up and down.
+  expect([colour(4.5 / STRETCH_X, 0), colour(-4.5 / STRETCH_X, 0), colour(0, 4.5), colour(0, -4.5)]).toEqual([gold, gold, gold, gold])
+  // Unscaled, 4.5 units across is already past that band, and 5.5 is the sclera: the iris is narrower in units than it is tall.
+  expect(colour(4.5, 0) === gold).toBe(false)
+  expect(colour(5.5, 0)).toBe(white)
   // The iris travels with the gaze in eye units, so it still sits inside the lids at the largest reach.
-  expect(eyeCell(6 + 4 / STRETCH_X, 0, { ...pose, ox: 6 })[0] > 0.55).toBe(true)
+  expect(colour(6 + 4.5 / STRETCH_X, 0, { ...pose, ox: 6 })).toBe(gold)
 })
 
-test('lashes stand above the open upper lid in a row of strokes and fold away when the eye shuts', () => {
-  const open = { ox: 0, oy: 0, open: 1, t: 0 }
-  // Along a line just above the lid at the middle, the lash strokes alternate with gaps.
-  const [yU] = lids(0, 1)
-  const row = Array.from({ length: 120 }, (_, i) => eyeCell(-10 + i * 0.2, yU - 2.6, open)[0] >= 0.5)
-  const strokes = row.filter((on, i) => on && !row[i - 1]).length
+test('lashes stand above the open upper lid in a row of dark strokes and fold away when the eye shuts', () => {
+  // Along the lid, 3 units above its line (just over the kohl), the lash strokes are dark and the lid's skin shows between them.
+  const above = (open: number) => Array.from({ length: 100 }, (_, i) => eyeCell(-8 + i * 0.2, lids(-8 + i * 0.2, open)[0] - 3, { ox: 0, oy: 0, open })[0])
+  const row = above(1)
+  const strokes = row.filter((l, i) => l === 0 && row[i - 1] !== 0).length
   expect(strokes >= 4).toBe(true)
-  const gaps = row.filter(on => !on).length
-  expect(gaps > 0).toBe(true)
-  // Shut, there are none.
-  const shut = { ...open, open: 0 }
-  const [yS] = lids(0, 0)
-  // (px up to 8: nearer the corner the kohl line itself rises through this height.)
-  expect(Array.from({ length: 90 }, (_, i) => eyeCell(-10 + i * 0.2, yS - 2.6, shut)[0] >= 0.5).some(Boolean)).toBe(false)
+  expect(row.filter(l => l > 0.4).length > strokes).toBe(true)
+  // Shut, there are none: only skin.
+  expect(above(0).every(l => l > 0.4)).toBe(true)
+})
+
+test('skin fills the whole frame, shaded darker toward its corners', () => {
+  const pose = { ox: 0, oy: 0, open: 1 }
+  for (const columns of [30, 60, 84]) {
+    const [w, h] = fit(columns)
+    const cells = eyeCells(w, h, pose)
+    // Only the dark strokes (kohl, lashes, brow, markings) and the pupil leave a cell empty: under a quarter, even at 28 columns where a stroke is a whole row thick.
+    expect(cells.flat().filter(s => s[0] !== BLANK).length > 0.75 * w * h).toBe(true)
+    for (const [x, y] of [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]] as const) expect(cells[y]?.[x]?.[0] === BLANK).toBe(false)
+  }
+  // The cheek is brighter than the frame's corner, and the brow is a dark band on the skin above the eye.
+  const cheek = eyeCell(-10, 12, pose)[0]
+  expect([cheek > 0.5, eyeCell(-18, 22, pose)[0] < cheek, eyeCell(6, -20, pose)[0] < 0.4, eyeCell(6, -15, pose)[0] > 0.5]).toEqual([true, true, true, true])
+})
+
+test('the kohl is a dark line on the bright skin: heavy on the upper lid, winged past the outer corner, with the lower lid, teardrop and spiral drawn too', () => {
+  for (const open of [1, 0.55, 0]) {
+    const pose = { ox: 0, oy: 0, open }
+    const [yU, yL] = lids(0, open)
+    // Empty cells (luminance 0) on both lid lines, the wing (4 units past the outer corner at 15), the teardrop and the spiral.
+    expect([eyeCell(0, yU - 0.4, pose)[0], eyeCell(0, yL + 0.2, pose)[0], eyeCell(19, -1.12, pose)[0], eyeCell(-3.5, 11.5, pose)[0], eyeCell(4.5, 9.8, pose)[0]]).toEqual([0, 0, 0, 0, 0])
+    // The upper line is thicker toward the outer corner than toward the inner one.
+    const thickness = (px: number) => Array.from({ length: 80 }, (_, i) => eyeCell(px, lids(px, open)[0] - 4.4 + i * 0.1, pose)[0]).filter(l => l === 0).length
+    expect(thickness(9) > thickness(-9)).toBe(true)
+  }
+  // The wing thins to its tip and the skin beyond it is bright again.
+  const pose = { ox: 0, oy: 0, open: 1 }
+  const wing = (px: number) => Array.from({ length: 120 }, (_, i) => eyeCell(px, -9 + i * 0.1, pose)[0]).filter(l => l === 0).length
+  expect([wing(16) > wing(20), wing(20) > wing(24), wing(26)]).toEqual([true, true, 0])
 })
 
 test('the open eye shows a gold iris, a dark pupil and a white highlight; the lids meet when shut', () => {
   const colours = (rows: Seg[][]) => new Set(rows.flat().map(s => s[1]))
-  const open = colours(eyeCells(W, H, { ox: 0, oy: 0, open: 1, t: 0 }))
+  const open = colours(eyeCells(W, H, { ox: 0, oy: 0, open: 1 }))
   expect([open.has(goldBright), open.has(gold), open.has(white)]).toEqual([true, true, true])
-  expect(eyeCell(0, 0, { ox: 0, oy: 0, open: 1, t: 0 })[0]).toBe(0)
-  const shut = colours(eyeCells(W, H, { ox: 0, oy: 0, open: 0, t: 0 }))
+  expect(eyeCell(0, 0, { ox: 0, oy: 0, open: 1 })[0]).toBe(0)
+  const shut = colours(eyeCells(W, H, { ox: 0, oy: 0, open: 0 }))
   expect([shut.has(goldBright), shut.has(gold), shut.has(white)]).toEqual([false, false, false])
   const [u, l] = lids(3, 0)
   expect(u).toBe(l)
@@ -236,52 +263,25 @@ test('thinking sweeps the gaze across the top; the tool eye scans left and right
   expect(xs).toEqual([-1, 0, 1, 0])
 })
 
-test('sparkles twinkle dim, bright, dim on their own phase, only in the dark around the eye', () => {
-  const s = { period: 2000, phase: 0 }
-  expect(sparkleLevel(s, 0)).toBe(0)
-  expect(sparkleLevel(s, 1000)).toBe(1)
-  expect(Math.abs(sparkleLevel(s, 2000)) < 1e-9).toBe(true)
-  expect(sparkleLevel({ period: 2000, phase: 0.5 }, 0)).toBe(1)
-  expect(twinkle(0.1, 0)[0]).toBe(BLANK)
-  expect(twinkle(0.4, 0)[0]).toBe('·')
-  expect(twinkle(0.7, 0)[0]).toBe('+')
-  expect(twinkle(0.95, 1)).toEqual(['*', goldBright])
-
-  const isEmpty = (x: number, y: number) => y < 2 || y > 10
-  const list = scatter(40, 13, isEmpty)
-  expect(list).toEqual(scatter(40, 13, isEmpty))
-  expect(list.length > 3 && list.length <= Math.round((40 * 13) / 48)).toBe(true)
-  for (const a of list) {
-    expect(isEmpty(a.x, a.y)).toBe(true)
-    for (const b of list) if (a !== b) expect(Math.abs(a.x - b.x) >= 3 || Math.abs(a.y - b.y) >= 2).toBe(true)
-  }
-
-  // In a frame, every star cell (one the sparkles changed) is one the open eye leaves blank.
-  const dark = eyeCells(W, H, { ox: 0, oy: 0, open: 1, t: 0 })
+test('the eye redraws only when its size or pose changes', () => {
   const m = init('idle', rnd)
-  let stars = 0
-  for (let t = 0; t < 4000; t += 400) {
-    m.t = t
-    const bare = text(eyeCells(W, H, { ox: m.ox, oy: m.oy, open: openness(m), t }).map(merge))
-    text(frame(m)).forEach((row, y) =>
-      [...row].forEach((ch, x) => {
-        if (ch === [...(bare[y] ?? '')][x]) return
-        stars++
-        expect(dark[y]?.[x]?.[0]).toBe(BLANK)
-        // Never in the frame's outer ring: the stars keep clear of the region's edges.
-        const [ix, iy] = SPARK_INSET
-        expect(x >= ix && x < W - ix && y >= iy && y < H - iy).toBe(true)
-      }),
-    )
-  }
-  expect(stars > 0).toBe(true)
-})
-
-test('the eye redraws only when its frame changes', () => {
-  const m = init('idle', rnd)
+  m.nextSaccade = m.nextBlink = 1e9
   expect(redraw(m, 40)).toBe(true)
   expect(redraw(m, 40)).toBe(false)
   expect(redraw(m, 30)).toBe(true)
+  // A settled eye is not drawn again; a glance and a blink are, each with a different picture.
+  advance(m, FRAME, rnd)
+  expect(redraw(m, 30)).toBe(false)
+  const still = text(m.rows).join('\n')
+  m.gx = 1
+  advance(m, FRAME, rnd)
+  expect(redraw(m, 30)).toBe(true)
+  const glance = text(m.rows).join('\n')
+  expect(glance === still).toBe(false)
+  m.nextBlink = m.t
+  advance(m, FRAME, rnd)
+  expect(redraw(m, 30)).toBe(true)
+  expect(text(m.rows).join('\n') === glance).toBe(false)
 })
 
 test('/horus-eye explains what shows and why', () => {
@@ -340,7 +340,7 @@ test('the current row draws the eye centred on the terminal, in mono rows, and t
   const ui = await $.ui.mount(row('eye-2', 'terminal'))
   const eye = await ui.find({ type: 'Client', key: 'eye' })
   expect(eye?.props.props).toEqual({ mode: 'thinking', shift: 0, slack: 0 }) // the terminal's cells are as wide as its glyphs: no shift; no width held back by default
-  // The region is 84 wide with no viewport; its frame's rows plus the starry rows above and below.
+  // The region is 84 wide with no viewport; its frame's rows plus the rows of skin above and below.
   const [, fh] = fit(84)
   const [padT, padB] = pads(fh)
   expect([eye?.props.width, eye?.props.height]).toEqual([84, fh + padT + padB])
@@ -378,22 +378,21 @@ test('/horus-fit: the saved percent reaches the eye as a share, and the eye draw
 const NARROW = /^[ -~ ·]*$/
 
 test('every eye row is one line of exactly the frame width, in single-width glyphs', () => {
-  const m = init('idle', rnd)
   for (const columns of [30, 40, 60, 84]) {
     const [w, h] = fit(columns)
     expect(w).toBe(columns - MARGIN)
-    for (let t = 0; t < 4000; t += 300) {
-      m.t = t
-      for (const [rows, width] of [[text(frame(m, w, h)), w]] as const) {
-        for (const row of rows) {
-          expect([...row].length).toBe(width)
-          expect(NARROW.test(row)).toBe(true)
-        }
+    const [padT, padB] = pads(h)
+    // Every pose, the rows above and below the frame included.
+    for (const [ox, oy, open] of [[0, 0, 1], [6, 2.5, 1], [-6, -2.5, 0.55], [0, 0, 0.12], [0, 0, 0]] as const) {
+      const rows = text(eyeCells(w, h, { ox, oy, open }, -padT, h + padB))
+      expect(rows.length).toBe(padT + h + padB)
+      for (const row of rows) {
+        expect([...row].length).toBe(w)
+        expect(NARROW.test(row)).toBe(true)
       }
     }
   }
   expect(NARROW.test(RAMP)).toBe(true)
-  for (let l = 0; l <= 1; l += 0.05) expect(NARROW.test(twinkle(l, 0)[0])).toBe(true)
 })
 
 for (const columns of [30, 40, 60, 84]) {
@@ -409,8 +408,8 @@ for (const columns of [30, 40, 60, 84]) {
     expect(rows.length).toBe(fh + padT + padB)
     for (const r of rows) expect([...r.text].length).toBe(fw)
     const [outer, frameBox] = await ui.findAll({ type: 'Box', in: 'eye' })
-    // The frame's rows come from the width alone; the breathing room is starry rows above and below, not padding (the desktop ignored it).
-    // The outer Box is black too, so the pad rows above and below the eye are not left as the app's own colour.
+    // The frame's rows come from the width alone; above and below it are more rows of skin, not padding (the desktop ignored it).
+    // The outer Box is black too, so the margin beside the picture is not left as the app's own colour.
     expect([outer?.props.width, outer?.props.alignItems, outer?.props.backgroundColor]).toEqual([columns, 'center', bg])
     const blank = (await ui.findAll({ type: 'Text', in: 'eye' })).filter(t => t.props.wrap !== 'truncate-end' && t.text === ' ')
     expect(blank.length).toBe(0) // the pad rows are drawn like the frame's, as rows of runs
@@ -420,24 +419,23 @@ for (const columns of [30, 40, 60, 84]) {
   })
 }
 
-test('the black rows above and below the frame hold twinkling stars, one glyph wide and clear of the side edges', () => {
-  for (const w of [30, 82]) {
-    const seen = new Set<string>()
-    for (let t = 0; t < 6000; t += 250) {
-      const top = padRows(PAD_TOP, w, t, 11)
-      expect(top.length).toBe(PAD_TOP)
-      for (const r of top) {
-        const line = r.map(([s]) => s).join('')
-        expect([...line].length).toBe(w)
-        expect(NARROW.test(line)).toBe(true)
-        expect(line.slice(0, SPARK_INSET[0]).trim()).toBe('')
-        expect(line.slice(w - SPARK_INSET[0]).trim()).toBe('')
-        for (const ch of line) if (ch.trim() !== '') seen.add(ch)
-      }
-      expect(padRows(PAD_BOTTOM, w, t, 23).length).toBe(PAD_BOTTOM)
+test('the rows above and below the frame carry the skin on: every cell shaded, the same width as the frame', () => {
+  for (const columns of [30, 84]) {
+    const m = init('idle', rnd)
+    redraw(m, columns)
+    const [w, h] = fit(columns)
+    expect([m.top.length, m.rows.length, m.bottom.length]).toEqual([pads(h)[0], h, pads(h)[1]])
+    for (const line of text([...m.top, ...m.bottom])) {
+      expect([...line].length).toBe(w)
+      expect(NARROW.test(line)).toBe(true)
+      expect(line.includes(BLANK)).toBe(false)
     }
-    expect(seen.size > 1).toBe(true) // they twinkle through more than one glyph
+    // One picture: the frame's rows are the same cells as the middle of the whole.
+    const all = text(eyeCells(w, h, { ox: 0, oy: 0, open: 1 }, -pads(h)[0], h + pads(h)[1]).map(merge))
+    expect(text([...m.top, ...m.rows, ...m.bottom])).toEqual(all)
+    expect(text(m.rows)).toEqual(text(frame(m, w, h)))
   }
+  expect([PAD_TOP, PAD_BOTTOM, pads(H)]).toEqual([4, 1, [4, 1]])
 })
 
 test('the frame sits in the middle of its region: equal margins either side, one cell apart at most', () => {

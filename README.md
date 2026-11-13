@@ -93,6 +93,17 @@ Then run `/reload-plugins` and `/horus-kit:setup`. The setup:
 
 It asks before every write, skips existing files unless you say otherwise, and never installs plugins or changes settings itself.
 
+## Updating
+
+Refresh the marketplace, update the plugin, then restart Claude Code (the update applies on restart):
+
+```
+claude plugin marketplace update eyes-of-horus
+claude plugin update eyes-of-horus@eyes-of-horus
+```
+
+Installed through `horus-kit`? The same two commands update the mod. In the desktop app, open Plugins and update `eyes-of-horus` there, or remove and add it again. `claude plugin list` shows the installed version.
+
 ## Commands
 
 | Command | What it does |
